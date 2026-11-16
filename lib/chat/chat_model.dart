@@ -50,8 +50,11 @@ class ChatMessage {
     required this.sentAt,
     this.text,
     this.imagePath,
+    this.imageBytes,
   }) : assert(
-         type == ChatMessageType.text ? text != null : imagePath != null,
+         type == ChatMessageType.text
+             ? text != null
+             : imagePath != null || imageBytes != null,
        );
 
   final String messageId;
@@ -60,5 +63,6 @@ class ChatMessage {
   final ChatMessageType type;
   final String? text;
   final String? imagePath;
+  final Uint8List? imageBytes;
   final DateTime sentAt;
 }

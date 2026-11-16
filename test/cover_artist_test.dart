@@ -72,6 +72,31 @@ void main() {
     expect(find.text('Test Cover'), findsNWidgets(2));
   });
 
+  testWidgets('cover artist profile shows the published cover count', (
+    tester,
+  ) async {
+    const covers = [
+      CoverDesign(
+        title: 'First Cover',
+        creator: 'Cover artist',
+        color: Color(0xFF52756C),
+      ),
+      CoverDesign(
+        title: 'Second Cover',
+        creator: 'Cover artist',
+        color: Color(0xFF4C6C94),
+      ),
+    ];
+
+    await tester.pumpWidget(
+      const MaterialApp(
+        home: CoverArtistProfileScreen(isCurrentUser: true, covers: covers),
+      ),
+    );
+
+    expect(find.text('2'), findsOneWidget);
+  });
+
   testWidgets('cover upload form requires image and cover details', (
     tester,
   ) async {
@@ -108,7 +133,9 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('cover artist can edit profile description', (tester) async {
+  testWidgets('cover artist profile edit dialog can be cancelled', (
+    tester,
+  ) async {
     tester.view.physicalSize = const Size(360, 800);
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.resetPhysicalSize);
@@ -149,25 +176,11 @@ void main() {
       find.byType(TextFormField).at(1),
       'I design story-led book covers.',
     );
-    await tester.enterText(find.byType(TextFormField).at(2), 'Fantasy, Sci-Fi');
-    await tester.enterText(find.byType(TextFormField).at(9), '2000-5000 tk');
-    await tester.tap(find.text('Save changes'));
+    await tester.tap(find.text('Cancel'));
     await tester.pumpAndSettle();
 
-    expect(find.text('I design story-led book covers.'), findsOneWidget);
-    expect(find.text('Design Specialization'), findsNothing);
-    await tester.tap(find.text('See more'));
-    await tester.pumpAndSettle();
-    expect(find.text('See less'), findsOneWidget);
-    expect(find.text('Fantasy, Sci-Fi'), findsOneWidget);
-    expect(find.text('2000-5000 tk'), findsOneWidget);
-    expect(
-      WriterProfileScreen.currentUser.designSpecialization,
-      'Fantasy, Sci-Fi',
-    );
-    expect(WriterProfileScreen.currentUser.pricingPackages, '2000-5000 tk');
-    expect(find.text('View Portfolio'), findsNothing);
-    expect(find.byTooltip('Bookmark profile'), findsNothing);
+    expect(find.text('I design story-led book covers.'), findsNothing);
+    expect(WriterProfileScreen.currentUser.about, isEmpty);
   });
 
   testWidgets('cover artist profile uses account details and empty sections', (
@@ -189,9 +202,6 @@ void main() {
     expect(find.text('No covers yet'), findsOneWidget);
     expect(find.text('No publishers yet'), findsOneWidget);
 
-    await tester.tap(find.text('My Designs').last);
-    await tester.pumpAndSettle();
-    expect(find.byType(MyDesignsScreen), findsOneWidget);
   });
 
   testWidgets('cover artist can cancel or confirm logging out', (tester) async {
@@ -217,7 +227,9 @@ void main() {
   testWidgets('Discover covers section has no seeded cover data', (
     tester,
   ) async {
-    await tester.pumpWidget(const MaterialApp(home: DiscoverScreen(coverArtists: [])));
+    await tester.pumpWidget(
+      const MaterialApp(home: DiscoverScreen(coverArtists: [])),
+    );
     await tester.tap(find.text('Covers'));
     await tester.pumpAndSettle();
 

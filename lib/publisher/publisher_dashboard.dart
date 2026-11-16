@@ -1,11 +1,13 @@
-import 'dart:io';
+import 'dart:convert';
+import 'dart:typed_data';
 
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 
 import '../main_page/novelly_bottom_navigation.dart';
 import '../main_page/writer_profile.dart';
+import '../services/content_api.dart';
+import '../widgets/image_provider_for_path.dart';
 
 const Color _ink = Color(0xFF173B43);
 const Color _deepInk = Color(0xFF12343B);
@@ -29,6 +31,8 @@ class PublisherBookRecord {
     this.isbn = '',
     this.publication = '',
     this.imagePath,
+    this.imageBytes,
+    this.status = 'draft',
   });
 
   final String id;
@@ -42,6 +46,8 @@ class PublisherBookRecord {
   final String isbn;
   final String publication;
   final String? imagePath;
+  final Uint8List? imageBytes;
+  final String status;
 }
 
 @immutable
@@ -142,6 +148,7 @@ class _PublisherDashboardScreenState extends State<PublisherDashboardScreen> {
   final _bookYear = TextEditingController();
   String? _bookGenre;
   String? _bookImagePath;
+  Uint8List? _bookImageBytes;
   String? _editingBookId;
   bool _addingBook = false;
   bool get _authorized =>
@@ -153,6 +160,7 @@ class _PublisherDashboardScreenState extends State<PublisherDashboardScreen> {
     super.initState();
     if (_authorized) {
       _workspace = PublisherWorkspaceStore.forAccount(_accountId);
+      _loadWorkspace();
     }
   }
 
@@ -185,6 +193,7 @@ class _PublisherDashboardScreenState extends State<PublisherDashboardScreen> {
     _bookYear.text = book.year;
     _bookGenre = book.genre.isEmpty ? null : book.genre;
     _bookImagePath = book.imagePath;
+    _bookImageBytes = book.imageBytes;
     _editingBookId = book.id;
     setState(() => _addingBook = true);
   }
@@ -200,41 +209,203 @@ class _PublisherDashboardScreenState extends State<PublisherDashboardScreen> {
     _bookYear.clear();
     _bookGenre = null;
     _bookImagePath = null;
+    _bookImageBytes = null;
     _editingBookId = null;
   }
 
-  void _saveBook() {
+  Future<void> _saveBook() async {
     if (!_bookFormKey.currentState!.validate()) return;
-    final id = _editingBookId ?? _workspace.createBookId();
-    final book = PublisherBookRecord(
-      id: id,
-      title: _bookTitle.text.trim(),
-      author: _bookAuthor.text.trim(),
-      year: _bookYear.text.trim(),
-      description: _bookDescription.text.trim(),
-      genre: _bookGenre ?? '',
-      pageCount: _bookPages.text.trim(),
-      goodreadsLink: _bookGoodreads.text.trim(),
-      isbn: _bookIsbn.text.trim(),
-      publication: _bookPublication.text.trim(),
-      imagePath: _bookImagePath,
-    );
-    setState(() {
-      final index = _workspace.books.indexWhere((item) => item.id == id);
-      if (index < 0) {
-        _workspace.books.insert(0, book);
-      } else {
-        _workspace.books[index] = book;
+    final api = ContentApi();
+    final bookData = <String, dynamic>{
+      'title': _bookTitle.text.trim(),
+      'author': _bookAuthor.text.trim(),
+      'year': _bookYear.text.trim(),
+      'description': _bookDescription.text.trim(),
+      'genre': _bookGenre ?? '',
+      'pageCount': _bookPages.text.trim(),
+      'goodreadsLink': _bookGoodreads.text.trim(),
+      'isbn': _bookIsbn.text.trim(),
+      'publication': _bookPublication.text.trim(),
+      ...await api.imagePayload('imageBase64', _bookImagePath),
+    };
+    try {
+      final response = _editingBookId == null
+          ? await api.post('/api/publisher-books', bookData)
+          : await api.put(
+              '/api/publisher-books/${Uri.encodeComponent(_editingBookId!)}',
+              bookData,
+            );
+      if (response is! Map<String, dynamic>) {
+        throw const ContentApiException(
+          'The backend returned an invalid publisher book.',
+        );
       }
-      _addingBook = false;
-      _clearBookForm();
-    });
+      final book = _publisherBookFromJson(response);
+      if (!mounted) return;
+      setState(() {
+        final index = _workspace.books.indexWhere((item) => item.id == book.id);
+        if (index < 0) {
+          _workspace.books.insert(0, book);
+        } else {
+          _workspace.books[index] = book;
+        }
+        _addingBook = false;
+        _clearBookForm();
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Book saved as a private draft.')),
+      );
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Could not save publisher book: $error')),
+      );
+    }
+  }
+
+  PublisherBookRecord _publisherBookFromJson(Map<String, dynamic> json) {
+    final imageBase64 = json['imageBase64'];
+    final imageUrl = json['imageUrl'];
+    final api = ContentApi();
+    return PublisherBookRecord(
+      id: json['id'] is String ? json['id'] as String : '',
+      title: json['title'] is String ? json['title'] as String : '',
+      author: json['author'] is String ? json['author'] as String : '',
+      year: json['year'] is String ? json['year'] as String : '',
+      description: json['description'] is String
+          ? json['description'] as String
+          : '',
+      genre: json['genre'] is String ? json['genre'] as String : '',
+      pageCount: json['pageCount'] is String ? json['pageCount'] as String : '',
+      goodreadsLink: json['goodreadsLink'] is String
+          ? json['goodreadsLink'] as String
+          : '',
+      isbn: json['isbn'] is String ? json['isbn'] as String : '',
+      publication: json['publication'] is String
+          ? json['publication'] as String
+          : '',
+      imagePath: imageUrl is String ? api.absoluteUrl(imageUrl) : null,
+      imageBytes: imageBase64 is String ? base64Decode(imageBase64) : null,
+      status: json['status'] is String ? json['status'] as String : 'draft',
+    );
+  }
+
+  Future<void> _loadWorkspace() async {
+    try {
+      final api = ContentApi();
+      final results = await Future.wait<Object?>([
+        api.get('/api/publisher-books/mine'),
+        api.get('/api/publisher/workspace'),
+      ]);
+      if (results[0] is! List || results[1] is! Map<String, dynamic>) {
+        throw const ContentApiException(
+          'The backend returned an invalid publisher workspace.',
+        );
+      }
+      final books = (results[0] as List)
+          .whereType<Map<String, dynamic>>()
+          .map(_publisherBookFromJson)
+          .toList();
+      final data = results[1] as Map<String, dynamic>;
+      final authors = (data['authors'] as List? ?? const [])
+          .whereType<Map<String, dynamic>>()
+          .map(
+            (author) => PublisherAuthorRecord(
+              id: author['id'] is String ? author['id'] as String : '',
+              name: author['name'] is String ? author['name'] as String : '',
+              about: author['about'] is String ? author['about'] as String : '',
+            ),
+          )
+          .toList();
+      final deals = (data['deals'] as List? ?? const [])
+          .whereType<Map<String, dynamic>>()
+          .map(_dealFromJson)
+          .toList();
+      if (!mounted) return;
+      setState(() {
+        _workspace.books
+          ..clear()
+          ..addAll(books);
+        _workspace.authors
+          ..clear()
+          ..addAll(authors);
+        _workspace.deals
+          ..clear()
+          ..addAll(deals);
+      });
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Could not load publisher data: $error')),
+      );
+    }
+  }
+
+  ManuscriptDeal _dealFromJson(Map<String, dynamic> json) {
+    final stageName = json['stage'];
+    final stage = ManuscriptDealStage.values.firstWhere(
+      (value) => value.name == stageName,
+      orElse: () => ManuscriptDealStage.submitted,
+    );
+    return ManuscriptDeal(
+      id: json['id'] is String ? json['id'] as String : '',
+      title: json['title'] is String ? json['title'] as String : '',
+      authorName: json['authorName'] is String
+          ? json['authorName'] as String
+          : '',
+      stage: stage,
+      genre: json['genre'] is String ? json['genre'] as String : '',
+      contractAmount: json['contractAmount'] is String
+          ? json['contractAmount'] as String
+          : '',
+      notes: json['notes'] is String ? json['notes'] as String : '',
+    );
+  }
+
+  Future<void> _persistPrivateWorkspace() async {
+    try {
+      await ContentApi().post('/api/publisher/workspace', {
+        'workspace': {
+          'authors': _workspace.authors
+              .map(
+                (author) => {
+                  'id': author.id,
+                  'name': author.name,
+                  'about': author.about,
+                },
+              )
+              .toList(),
+          'deals': _workspace.deals
+              .map(
+                (deal) => {
+                  'id': deal.id,
+                  'title': deal.title,
+                  'authorName': deal.authorName,
+                  'stage': deal.stage.name,
+                  'genre': deal.genre,
+                  'contractAmount': deal.contractAmount,
+                  'notes': deal.notes,
+                },
+              )
+              .toList(),
+        },
+      });
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Could not save publisher workspace: $error')),
+      );
+    }
   }
 
   Future<void> _pickBookImage() async {
     final image = await ImagePicker().pickImage(source: ImageSource.gallery);
     if (image != null && mounted) {
-      setState(() => _bookImagePath = image.path);
+      final bytes = await image.readAsBytes();
+      setState(() {
+        _bookImagePath = image.path;
+        _bookImageBytes = bytes;
+      });
     }
   }
 
@@ -256,6 +427,11 @@ class _PublisherDashboardScreenState extends State<PublisherDashboardScreen> {
             onPressed: () => Navigator.pop(context, 'edit'),
             child: const Text('Edit book'),
           ),
+          if (book.status != 'published')
+            TextButton(
+              onPressed: () => Navigator.pop(context, 'publish'),
+              child: const Text('Publish book'),
+            ),
           TextButton(
             onPressed: () => Navigator.pop(context, 'delete'),
             child: const Text('Remove book'),
@@ -266,10 +442,51 @@ class _PublisherDashboardScreenState extends State<PublisherDashboardScreen> {
     if (!mounted) return;
     if (action == 'edit') {
       _editBook(book);
+    } else if (action == 'publish') {
+      try {
+        final response = await ContentApi().patch(
+          '/api/publisher-books/${Uri.encodeComponent(book.id)}/publish',
+        );
+        if (response is! Map<String, dynamic>) {
+          throw const ContentApiException(
+            'The backend returned an invalid publisher book.',
+          );
+        }
+        final publishedBook = _publisherBookFromJson(response);
+        if (!mounted) return;
+        setState(() {
+          final index = _workspace.books.indexWhere(
+            (item) => item.id == publishedBook.id,
+          );
+          if (index >= 0) _workspace.books[index] = publishedBook;
+        });
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Book published and visible to everyone.'),
+          ),
+        );
+      } catch (error) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Could not publish the book: $error')),
+        );
+      }
     } else if (action == 'delete') {
-      setState(
-        () => _workspace.books.removeWhere((item) => item.id == book.id),
-      );
+      try {
+        await ContentApi().delete(
+          '/api/publisher-books/${Uri.encodeComponent(book.id)}',
+        );
+        if (mounted) {
+          setState(
+            () => _workspace.books.removeWhere((item) => item.id == book.id),
+          );
+        }
+      } catch (error) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Could not remove the book: $error')),
+        );
+      }
     }
   }
 
@@ -296,6 +513,7 @@ class _PublisherDashboardScreenState extends State<PublisherDashboardScreen> {
         ),
       );
     });
+    await _persistPrivateWorkspace();
   }
 
   Future<void> _editAuthor(PublisherAuthorRecord author) async {
@@ -313,6 +531,7 @@ class _PublisherDashboardScreenState extends State<PublisherDashboardScreen> {
         about: updated.about,
       );
     });
+    await _persistPrivateWorkspace();
   }
 
   void _navigate(NovellyNavigationDestination destination) {
@@ -495,7 +714,9 @@ class _PublisherDashboardScreenState extends State<PublisherDashboardScreen> {
         ),
         const SizedBox(height: 12),
         Column(
-          children: _workspace.deals.map((deal) => _buildDealCard(deal, compact)).toList(),
+          children: _workspace.deals
+              .map((deal) => _buildDealCard(deal, compact))
+              .toList(),
         ),
       ],
     );
@@ -540,7 +761,10 @@ class _PublisherDashboardScreenState extends State<PublisherDashboardScreen> {
                 ),
               ),
               Container(
-                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 10,
+                  vertical: 4,
+                ),
                 decoration: BoxDecoration(
                   color: stageColors[deal.stage]!.withValues(alpha: 0.15),
                   borderRadius: BorderRadius.circular(12),
@@ -566,7 +790,11 @@ class _PublisherDashboardScreenState extends State<PublisherDashboardScreen> {
             const SizedBox(height: 6),
             Text(
               'Notes: ${deal.notes}',
-              style: const TextStyle(color: _ink, fontSize: 12, fontStyle: FontStyle.italic),
+              style: const TextStyle(
+                color: _ink,
+                fontSize: 12,
+                fontStyle: FontStyle.italic,
+              ),
             ),
           ],
           const SizedBox(height: 10),
@@ -578,9 +806,11 @@ class _PublisherDashboardScreenState extends State<PublisherDashboardScreen> {
                 TextButton(
                   onPressed: () {
                     setState(() {
-                      final prev = ManuscriptDealStage.values[deal.stage.index - 1];
+                      final prev =
+                          ManuscriptDealStage.values[deal.stage.index - 1];
                       deal.stage = prev;
                     });
+                    _persistPrivateWorkspace();
                   },
                   child: const Text('⬅️ Move Back'),
                 ),
@@ -588,9 +818,11 @@ class _PublisherDashboardScreenState extends State<PublisherDashboardScreen> {
                 ElevatedButton(
                   onPressed: () {
                     setState(() {
-                      final next = ManuscriptDealStage.values[deal.stage.index + 1];
+                      final next =
+                          ManuscriptDealStage.values[deal.stage.index + 1];
                       deal.stage = next;
                     });
+                    _persistPrivateWorkspace();
                   },
                   style: ElevatedButton.styleFrom(
                     backgroundColor: _deepInk,
@@ -744,14 +976,14 @@ class _PublisherDashboardScreenState extends State<PublisherDashboardScreen> {
       decoration: BoxDecoration(
         border: Border.all(color: _gold),
         borderRadius: BorderRadius.circular(10),
-        image: _bookImagePath == null
-            ? null
-            : DecorationImage(
-                image: kIsWeb
-                    ? NetworkImage(_bookImagePath!)
-                    : FileImage(File(_bookImagePath!)) as ImageProvider,
+        image: _bookImageBytes != null || _bookImagePath != null
+            ? DecorationImage(
+                image: _bookImageBytes != null
+                    ? MemoryImage(_bookImageBytes!)
+                    : imageProviderForPath(_bookImagePath!),
                 fit: BoxFit.cover,
-              ),
+              )
+            : null,
       ),
       child: _bookImagePath == null
           ? const Column(
@@ -1063,6 +1295,7 @@ class _PublisherDashboardScreenState extends State<PublisherDashboardScreen> {
       setState(
         () => _workspace.authors.removeWhere((item) => item.id == author.id),
       );
+      await _persistPrivateWorkspace();
     }
   }
 }
@@ -1194,7 +1427,7 @@ class _PublisherBookCard extends StatelessWidget {
                 height: constraints.maxWidth * 1.01,
                 child: Container(
                   color: const Color(0xFFFBF5EE).withValues(alpha: .75),
-                  child: book.imagePath == null
+                  child: book.imageBytes == null && book.imagePath == null
                       ? const Center(
                           child: Icon(
                             Icons.menu_book_outlined,
@@ -1203,9 +1436,9 @@ class _PublisherBookCard extends StatelessWidget {
                           ),
                         )
                       : Image(
-                          image: kIsWeb
-                              ? NetworkImage(book.imagePath!)
-                              : FileImage(File(book.imagePath!)),
+                          image: book.imageBytes != null
+                              ? MemoryImage(book.imageBytes!)
+                              : imageProviderForPath(book.imagePath!),
                           fit: BoxFit.cover,
                           errorBuilder: (context, error, stackTrace) =>
                               const Center(

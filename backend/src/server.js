@@ -39,11 +39,30 @@ async function start() {
 
   try {
     await mongoClient.connect();
-    const profiles = mongoClient
-      .db(requiredEnv('MONGODB_DB'))
-      .collection('users');
+    const database = mongoClient.db(requiredEnv('MONGODB_DB'));
+    const profiles = database.collection('users');
+    const books = database.collection('books');
+    const coverDesigns = database.collection('coverDesigns');
+    const publisherBooks = database.collection('publisherBooks');
+    const publisherWorkspaces = database.collection('publisherWorkspaces');
+    const conversations = database.collection('conversations');
+    const messages = database.collection('messages');
+    await books.createIndex({ authorUid: 1, createdAt: -1 });
+    await books.createIndex({ status: 1, createdAt: -1 });
+    await coverDesigns.createIndex({ ownerUid: 1, createdAt: -1 });
+    await coverDesigns.createIndex({ status: 1, createdAt: -1 });
+    await publisherBooks.createIndex({ ownerUid: 1, createdAt: -1 });
+    await publisherBooks.createIndex({ status: 1, createdAt: -1 });
+    await conversations.createIndex({ participantUids: 1, updatedAt: -1 });
+    await messages.createIndex({ conversationId: 1, sentAt: 1 });
     const app = createApp({
       profiles,
+      books,
+      coverDesigns,
+      publisherBooks,
+      publisherWorkspaces,
+      conversations,
+      messages,
       verifyIdToken: (token) => getAuth().verifyIdToken(token),
     });
     const server = app.listen(port, '0.0.0.0', () => {

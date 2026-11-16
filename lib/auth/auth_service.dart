@@ -10,12 +10,14 @@ class UserAuthProfile {
   final String name;
   final String email;
   final String role;
+  final Map<String, dynamic> profileData;
 
   const UserAuthProfile({
     required this.uid,
     required this.name,
     required this.email,
     required this.role,
+    this.profileData = const {},
   });
 
   bool get isWriter => role == 'Writer' || role == 'Writer and Publisher';
@@ -47,6 +49,7 @@ class AuthService {
         name: name.trim(),
         email: email.trim().toLowerCase(),
         role: role,
+        profileData: {'uid': 'test-uid', 'name': name.trim(), 'role': role},
       );
     }
 
@@ -95,6 +98,7 @@ class AuthService {
         name: 'Test User',
         email: email.trim().toLowerCase(),
         role: 'Writer',
+        profileData: {'uid': 'test-uid', 'name': 'Test User', 'role': 'Writer'},
       );
     }
 
@@ -212,6 +216,7 @@ class AuthService {
       name: requiredString('name'),
       email: requiredString('email'),
       role: requiredString('role'),
+      profileData: data,
     );
   }
 

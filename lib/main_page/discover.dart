@@ -5,7 +5,10 @@ import '../cover/cover_artist_directory.dart';
 import '../cover/cover_design.dart';
 import '../theme/theme_controller.dart';
 import '../widgets/boi_mela_banner.dart';
+import '../services/book_api.dart';
+import '../services/content_api.dart';
 import '../services/local_search_cache.dart';
+import '../widgets/image_provider_for_path.dart';
 import 'book_detail.dart';
 import 'discover_book.dart';
 import 'novelly_bottom_navigation.dart';
@@ -47,6 +50,9 @@ class _DiscoverScreenState extends State<DiscoverScreen> {
   String _selectedFilter = 'All';
   late int _selectedTab;
   bool _gridView = false;
+  List<DiscoverBook> _remoteBooks = const [];
+  List<PublisherEntry> _remotePublishers = const [];
+  List<WriterProfile> _remoteCoverArtists = const [];
 
   final List<String> _quickFilterChips = const [
     'All',
@@ -62,6 +68,89 @@ class _DiscoverScreenState extends State<DiscoverScreen> {
   void initState() {
     super.initState();
     _selectedTab = widget.initialTab;
+    _loadRemoteContent();
+  }
+
+  Future<void> _loadRemoteContent() async {
+    try {
+      final values = await Future.wait<Object?>([
+        BookApi().fetchAllBooks(),
+        ContentApi().get('/api/publisher-books'),
+        ContentApi().get('/api/profiles?role=Publisher'),
+        ContentApi().get('/api/profiles?role=Cover%20Artist'),
+      ]);
+      if (!mounted) return;
+      setState(() {
+        final writerBooks = values[0] as List<RemoteBook>;
+        final publisherBooks = values[1] as List;
+        _remoteBooks = [
+          ...writerBooks.map(
+            (book) => DiscoverBook(
+              id: book.id,
+              creatorUid: book.creatorUid,
+              title: book.title,
+              author: book.authorName.isEmpty
+                  ? 'Unknown author'
+                  : book.authorName,
+              rating: 'New',
+              genre: book.genre ?? '',
+              description: book.description,
+              pageCount: book.pageCount,
+              isbn: book.isbn,
+              publication: book.publication,
+              goodreadsLink: book.goodreadsLink,
+              imageUrl: book.imageUrl,
+            ),
+          ),
+          ...publisherBooks.whereType<Map<String, dynamic>>().map(
+            (book) => DiscoverBook(
+              id: book['id'] is String ? book['id'] as String : null,
+              creatorUid: book['creatorUid'] is String
+                  ? book['creatorUid'] as String
+                  : null,
+              title: book['title'] is String ? book['title'] as String : '',
+              author: book['author'] is String
+                  ? book['author'] as String
+                  : 'Unknown author',
+              rating: 'New',
+              genre: book['genre'] is String ? book['genre'] as String : '',
+              description: book['description'] is String
+                  ? book['description'] as String
+                  : '',
+              pageCount: int.tryParse(
+                book['pageCount'] is String ? book['pageCount'] as String : '',
+              ),
+              isbn: book['isbn'] is String ? book['isbn'] as String : null,
+              publication: book['publication'] is String
+                  ? book['publication'] as String
+                  : null,
+              goodreadsLink: book['goodreadsLink'] is String
+                  ? book['goodreadsLink'] as String
+                  : null,
+              imageUrl: book['imageUrl'] is String
+                  ? book['imageUrl'] as String
+                  : null,
+            ),
+          ),
+        ];
+        final publishers = values[2] as List;
+        _remotePublishers = publishers
+            .whereType<Map<String, dynamic>>()
+            .map(PublisherEntry.fromJson)
+            .toList();
+        final coverArtists = values[3] as List;
+        _remoteCoverArtists = coverArtists
+            .whereType<Map<String, dynamic>>()
+            .map(WriterProfile.fromJson)
+            .toList();
+      });
+    } catch (error) {
+      debugPrint('Could not load public content: $error');
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Could not load public content: $error')),
+      );
+    }
   }
 
   List<int> get _visibleTabIds =>
@@ -80,18 +169,39 @@ class _DiscoverScreenState extends State<DiscoverScreen> {
 
   List<DiscoverBook> get _visibleBooks {
     final query = _query.trim().toLowerCase();
-    List<DiscoverBook> filtered = widget.books;
+    List<DiscoverBook> filtered = [...widget.books, ..._remoteBooks];
 
     if (_selectedFilter == 'Humayun Ahmed') {
-      filtered = filtered.where((b) => b.author.contains('Humayun Ahmed')).toList();
+      filtered = filtered
+          .where((b) => b.author.contains('Humayun Ahmed'))
+          .toList();
     } else if (_selectedFilter == 'Boi Mela Bestsellers') {
-      filtered = filtered.where((b) => double.tryParse(b.rating) != null && double.parse(b.rating) >= 4.8).toList();
+      filtered = filtered
+          .where(
+            (b) =>
+                double.tryParse(b.rating) != null &&
+                double.parse(b.rating) >= 4.8,
+          )
+          .toList();
     } else if (_selectedFilter == 'Sci-Fi & Thrillers') {
-      filtered = filtered.where((b) => b.genre.contains('Young Adult') || b.genre.contains('Mystery')).toList();
+      filtered = filtered
+          .where(
+            (b) =>
+                b.genre.contains('Young Adult') || b.genre.contains('Mystery'),
+          )
+          .toList();
     } else if (_selectedFilter == 'Calligraphy Art') {
-      filtered = filtered.where((b) => b.genre.contains('Poetry') || b.genre.contains('Classic')).toList();
+      filtered = filtered
+          .where(
+            (b) => b.genre.contains('Poetry') || b.genre.contains('Classic'),
+          )
+          .toList();
     } else if (_selectedFilter == 'Classic Literature') {
-      filtered = filtered.where((b) => b.genre.contains('Classic') || b.genre.contains('Literary')).toList();
+      filtered = filtered
+          .where(
+            (b) => b.genre.contains('Classic') || b.genre.contains('Literary'),
+          )
+          .toList();
     } else if (_selectedFilter == 'Poetry') {
       filtered = filtered.where((b) => b.genre.contains('Poetry')).toList();
     }
@@ -119,7 +229,14 @@ class _DiscoverScreenState extends State<DiscoverScreen> {
             title: book.title,
             author: book.author,
             rating: rating,
+            pageCount: book.pageCount,
             genres: [book.genre],
+            description: book.description,
+            coverImagePath: book.imageUrl,
+            creatorUid: book.creatorUid,
+            isbn: book.isbn,
+            publication: book.publication,
+            goodreadsLink: book.goodreadsLink,
             reviews: const [],
           ),
         ),
@@ -129,15 +246,15 @@ class _DiscoverScreenState extends State<DiscoverScreen> {
 
   void _openPublisher(PublisherEntry publisher) {
     HapticFeedback.lightImpact();
+    final profileData = {
+      ...publisher.profileDetails,
+      'name': publisher.profileDetails['name'] ?? publisher.name,
+      'uid': publisher.profileDetails['uid'] ?? publisher.accountId,
+    };
     Navigator.of(context).push(
       MaterialPageRoute<void>(
         builder: (_) => PublisherProfileScreen(
-          profile: PublisherProfile.preview(
-            name: publisher.name,
-            publishedBookCount: publisher.bookCount,
-            accountId: publisher.accountId,
-            imagePath: publisher.imagePath,
-          ),
+          profile: PublisherProfile.fromJson(profileData),
         ),
       ),
     );
@@ -223,14 +340,20 @@ class _DiscoverScreenState extends State<DiscoverScreen> {
                                     )
                                   : _selectedTab == 1
                                   ? PublisherDirectoryView(
-                                      publishers: widget.publishers,
+                                      publishers: [
+                                        ...widget.publishers,
+                                        ..._remotePublishers,
+                                      ],
                                       query: _query,
                                       onPublisherTap: _openPublisher,
                                       scrollController: _scrollController,
                                       horizontalPadding: horizontalPadding,
                                     )
                                   : CoverArtistDirectoryView(
-                                      coverArtists: widget.coverArtists,
+                                      coverArtists: [
+                                        ...widget.coverArtists,
+                                        ..._remoteCoverArtists,
+                                      ],
                                       query: _query,
                                       onCoverArtistTap: _openCoverArtist,
                                       scrollController: _scrollController,
@@ -283,7 +406,11 @@ class _DiscoverScreenState extends State<DiscoverScreen> {
     );
   }
 
-  Widget _buildHeader(double availableWidth, bool mobile, NovellyThemeData theme) {
+  Widget _buildHeader(
+    double availableWidth,
+    bool mobile,
+    NovellyThemeData theme,
+  ) {
     final titleSize = mobile
         ? (availableWidth * 0.075).clamp(29.0, 34.0)
         : (availableWidth * 0.062).clamp(36.0, 48.0);
@@ -389,7 +516,9 @@ class _DiscoverScreenState extends State<DiscoverScreen> {
                                 child: Container(
                                   height: 4,
                                   decoration: BoxDecoration(
-                                    color: _selectedTab == 1 ? theme.accentGold : theme.inkColor,
+                                    color: _selectedTab == 1
+                                        ? theme.accentGold
+                                        : theme.inkColor,
                                     borderRadius: BorderRadius.circular(4),
                                   ),
                                 ),
@@ -432,6 +561,7 @@ class _DiscoverScreenState extends State<DiscoverScreen> {
       child: TextField(
         controller: _searchController,
         onChanged: (value) => setState(() => _query = value),
+        onSubmitted: (_) => _loadRemoteContent(),
         style: TextStyle(
           color: theme.isDark ? Colors.white : _deepTealInk,
           fontSize: mobile ? 16 : 19,
@@ -479,20 +609,23 @@ class _DiscoverScreenState extends State<DiscoverScreen> {
               borderRadius: BorderRadius.circular(20),
               child: AnimatedContainer(
                 duration: const Duration(milliseconds: 200),
-                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 7.5),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 14,
+                  vertical: 7.5,
+                ),
                 decoration: BoxDecoration(
                   color: selected
                       ? _boiMelaGreen
                       : (theme.isDark
-                          ? const Color(0xFF11262B)
-                          : const Color(0xFFF0F5F6)),
+                            ? const Color(0xFF11262B)
+                            : const Color(0xFFF0F5F6)),
                   borderRadius: BorderRadius.circular(20),
                   border: Border.all(
                     color: selected
                         ? _deepTealInk
                         : (theme.isDark
-                            ? _boiMelaGreen.withValues(alpha: 0.5)
-                            : _boiMelaGreen.withValues(alpha: 0.2)),
+                              ? _boiMelaGreen.withValues(alpha: 0.5)
+                              : _boiMelaGreen.withValues(alpha: 0.2)),
                     width: selected ? 1.5 : 1,
                   ),
                   boxShadow: selected
@@ -510,7 +643,9 @@ class _DiscoverScreenState extends State<DiscoverScreen> {
                   style: TextStyle(
                     color: selected
                         ? Colors.white
-                        : (theme.isDark ? const Color(0xFFD2E3E8) : _deepTealInk),
+                        : (theme.isDark
+                              ? const Color(0xFFD2E3E8)
+                              : _deepTealInk),
                     fontSize: 12.5,
                     fontWeight: selected ? FontWeight.w700 : FontWeight.w600,
                   ),
@@ -686,6 +821,7 @@ class _ListBookCard extends StatelessWidget {
                   child: _BookCoverTile(
                     title: book.title,
                     author: book.author,
+                    imagePath: book.imageUrl,
                   ),
                 ),
                 Expanded(
@@ -759,7 +895,9 @@ class _ListBookCard extends StatelessWidget {
                               child: Text(
                                 book.genre,
                                 style: TextStyle(
-                                  color: theme.isDark ? Colors.white : _deepTealInk,
+                                  color: theme.isDark
+                                      ? Colors.white
+                                      : _deepTealInk,
                                   fontSize: 11.5,
                                   fontWeight: FontWeight.w600,
                                 ),
@@ -808,13 +946,27 @@ class _BookCoverTile extends StatelessWidget {
   const _BookCoverTile({
     required this.title,
     required this.author,
+    this.imagePath,
   });
 
   final String title;
   final String author;
+  final String? imagePath;
 
   @override
   Widget build(BuildContext context) {
+    final path = imagePath;
+    if (path != null && path.isNotEmpty) {
+      return Image(
+        image: imageProviderForPath(path),
+        fit: BoxFit.cover,
+        errorBuilder: (_, _, _) => _placeholder(),
+      );
+    }
+    return _placeholder();
+  }
+
+  Widget _placeholder() {
     return Container(
       decoration: const BoxDecoration(
         gradient: LinearGradient(
@@ -929,6 +1081,7 @@ class _GridBookCard extends StatelessWidget {
               child: _BookCoverTile(
                 title: book.title,
                 author: book.author,
+                imagePath: book.imageUrl,
               ),
             ),
             Expanded(
@@ -971,7 +1124,11 @@ class _GridBookCard extends StatelessWidget {
                         Row(
                           mainAxisSize: MainAxisSize.min,
                           children: [
-                            Icon(Icons.star, color: theme.accentGold, size: compact ? 12 : 15),
+                            Icon(
+                              Icons.star,
+                              color: theme.accentGold,
+                              size: compact ? 12 : 15,
+                            ),
                             SizedBox(width: compact ? 2 : 4),
                             Text(
                               book.rating,
@@ -985,7 +1142,10 @@ class _GridBookCard extends StatelessWidget {
                         ),
                         Flexible(
                           child: Container(
-                            padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1.5),
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 5,
+                              vertical: 1.5,
+                            ),
                             decoration: BoxDecoration(
                               color: theme.isDark
                                   ? _boiMelaGreen.withValues(alpha: 0.35)
@@ -997,7 +1157,9 @@ class _GridBookCard extends StatelessWidget {
                               maxLines: 1,
                               overflow: TextOverflow.ellipsis,
                               style: TextStyle(
-                                color: theme.isDark ? Colors.white : _deepTealInk,
+                                color: theme.isDark
+                                    ? Colors.white
+                                    : _deepTealInk,
                                 fontSize: compact ? 9.5 : 11,
                                 fontWeight: FontWeight.w600,
                               ),

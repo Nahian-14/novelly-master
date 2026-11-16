@@ -101,19 +101,16 @@ class _RegisterScreenState extends State<RegisterScreen> {
       );
 
       // Save user session details
-      WriterProfileScreen.currentUser = WriterProfile(
-        name: userProfile.name,
-        accountId: userProfile.email,
-        isWriter: userProfile.isWriter,
-        isPublisher: userProfile.isPublisher,
-        isCoverArtist: userProfile.isCoverArtist,
-      );
+      final profileData = {
+        ...userProfile.profileData,
+        'uid': userProfile.uid,
+        'name': userProfile.name,
+        'role': userProfile.role,
+      };
+      WriterProfileScreen.currentUser = WriterProfile.fromJson(profileData);
 
       PublisherProfileScreen.currentUser = userProfile.isPublisher
-          ? PublisherProfile(
-              name: userProfile.name,
-              accountId: userProfile.email,
-            )
+          ? PublisherProfile.fromJson(profileData)
           : null;
 
       if (!mounted) return;
@@ -155,18 +152,15 @@ class _RegisterScreenState extends State<RegisterScreen> {
       );
       if (userProfile == null) return;
 
-      WriterProfileScreen.currentUser = WriterProfile(
-        name: userProfile.name,
-        accountId: userProfile.email,
-        isWriter: userProfile.isWriter,
-        isPublisher: userProfile.isPublisher,
-        isCoverArtist: userProfile.isCoverArtist,
-      );
+      final profileData = {
+        ...userProfile.profileData,
+        'uid': userProfile.uid,
+        'name': userProfile.name,
+        'role': userProfile.role,
+      };
+      WriterProfileScreen.currentUser = WriterProfile.fromJson(profileData);
       PublisherProfileScreen.currentUser = userProfile.isPublisher
-          ? PublisherProfile(
-              name: userProfile.name,
-              accountId: userProfile.email,
-            )
+          ? PublisherProfile.fromJson(profileData)
           : null;
 
       if (!mounted) return;

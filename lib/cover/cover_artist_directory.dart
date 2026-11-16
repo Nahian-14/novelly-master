@@ -1,8 +1,7 @@
-import 'dart:io';
-
 import 'package:flutter/material.dart';
 import '../main_page/writer_profile.dart';
 import '../theme/theme_controller.dart';
+import '../widgets/image_provider_for_path.dart';
 
 class CoverArtistDirectoryView extends StatefulWidget {
   const CoverArtistDirectoryView({
@@ -23,7 +22,8 @@ class CoverArtistDirectoryView extends StatefulWidget {
   final bool isGridView;
 
   @override
-  State<CoverArtistDirectoryView> createState() => _CoverArtistDirectoryViewState();
+  State<CoverArtistDirectoryView> createState() =>
+      _CoverArtistDirectoryViewState();
 }
 
 class _CoverArtistDirectoryViewState extends State<CoverArtistDirectoryView> {
@@ -51,7 +51,9 @@ class _CoverArtistDirectoryViewState extends State<CoverArtistDirectoryView> {
             (artist) =>
                 artist.name.toLowerCase().contains(normalized) ||
                 artist.about.toLowerCase().contains(normalized) ||
-                artist.designSpecialization.toLowerCase().contains(normalized) ||
+                artist.designSpecialization.toLowerCase().contains(
+                  normalized,
+                ) ||
                 artist.artStyle.toLowerCase().contains(normalized),
           )
           .toList();
@@ -104,7 +106,10 @@ class _CoverArtistDirectoryViewState extends State<CoverArtistDirectoryView> {
     return ValueListenableBuilder<NovellyThemeData>(
       valueListenable: NovellyThemeController.instance,
       builder: (context, theme, child) {
-        final visibleArtists = _filterArtists(widget.coverArtists, widget.query);
+        final visibleArtists = _filterArtists(
+          widget.coverArtists,
+          widget.query,
+        );
 
         if (visibleArtists.isEmpty) {
           return ListView(
@@ -180,20 +185,23 @@ class _CoverArtistDirectoryViewState extends State<CoverArtistDirectoryView> {
               borderRadius: BorderRadius.circular(20),
               child: AnimatedContainer(
                 duration: const Duration(milliseconds: 200),
-                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 7.5),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 14,
+                  vertical: 7.5,
+                ),
                 decoration: BoxDecoration(
                   color: isSelected
                       ? boiMelaGreen
                       : (theme.isDark
-                          ? const Color(0xFF11262B)
-                          : const Color(0xFFF0F5F6)),
+                            ? const Color(0xFF11262B)
+                            : const Color(0xFFF0F5F6)),
                   borderRadius: BorderRadius.circular(20),
                   border: Border.all(
                     color: isSelected
                         ? deepTealInk
                         : (theme.isDark
-                            ? boiMelaGreen.withValues(alpha: 0.5)
-                            : boiMelaGreen.withValues(alpha: 0.2)),
+                              ? boiMelaGreen.withValues(alpha: 0.5)
+                              : boiMelaGreen.withValues(alpha: 0.2)),
                     width: isSelected ? 1.5 : 1,
                   ),
                   boxShadow: isSelected
@@ -224,10 +232,12 @@ class _CoverArtistDirectoryViewState extends State<CoverArtistDirectoryView> {
                         color: isSelected
                             ? Colors.white
                             : (theme.isDark
-                                ? const Color(0xFFD2E3E8)
-                                : deepTealInk),
+                                  ? const Color(0xFFD2E3E8)
+                                  : deepTealInk),
                         fontSize: 12.5,
-                        fontWeight: isSelected ? FontWeight.w700 : FontWeight.w600,
+                        fontWeight: isSelected
+                            ? FontWeight.w700
+                            : FontWeight.w600,
                       ),
                     ),
                   ],
@@ -331,10 +341,7 @@ class _CoverArtistAvatar extends StatelessWidget {
         gradient: const LinearGradient(
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
-          colors: [
-            boiMelaGreen,
-            deepTealInk,
-          ],
+          colors: [boiMelaGreen, deepTealInk],
         ),
         boxShadow: [
           BoxShadow(
@@ -347,12 +354,14 @@ class _CoverArtistAvatar extends StatelessWidget {
       child: Container(
         decoration: BoxDecoration(
           shape: BoxShape.circle,
-          color: theme.isDark ? const Color(0xFF11262B) : const Color(0xFFF0F5F6),
+          color: theme.isDark
+              ? const Color(0xFF11262B)
+              : const Color(0xFFF0F5F6),
         ),
         child: ClipOval(
           child: hasImage
-              ? Image.file(
-                  File(imagePath),
+              ? Image(
+                  image: imageProviderForPath(imagePath),
                   width: size,
                   height: size,
                   fit: BoxFit.cover,
@@ -411,8 +420,8 @@ class _CoverArtistCard extends StatelessWidget {
     final subInfo = artist.artStyle.isNotEmpty
         ? '${artist.artStyle}${artist.yearsOfExperience.isNotEmpty ? ' • ${artist.yearsOfExperience}' : ''}'
         : (artist.yearsOfExperience.isNotEmpty
-            ? '${artist.yearsOfExperience} experience'
-            : '');
+              ? '${artist.yearsOfExperience} experience'
+              : '');
 
     return Material(
       color: Colors.transparent,
@@ -527,14 +536,18 @@ class _CoverArtistCard extends StatelessWidget {
                             children: [
                               Icon(
                                 Icons.brush_rounded,
-                                color: theme.isDark ? theme.accentGold : boiMelaGreen,
+                                color: theme.isDark
+                                    ? theme.accentGold
+                                    : boiMelaGreen,
                                 size: 12,
                               ),
                               const SizedBox(width: 4),
                               Text(
                                 'Cover Artist',
                                 style: TextStyle(
-                                  color: theme.isDark ? Colors.white : deepTealInk,
+                                  color: theme.isDark
+                                      ? Colors.white
+                                      : deepTealInk,
                                   fontSize: 11,
                                   fontWeight: FontWeight.w700,
                                 ),
@@ -544,7 +557,9 @@ class _CoverArtistCard extends StatelessWidget {
                         ),
 
                         // Custom requests badge
-                        if (artist.acceptsCustomRequests.toLowerCase().contains('yes') ||
+                        if (artist.acceptsCustomRequests.toLowerCase().contains(
+                              'yes',
+                            ) ||
                             artist.workAvailability.isNotEmpty)
                           Container(
                             padding: const EdgeInsets.symmetric(
@@ -552,7 +567,9 @@ class _CoverArtistCard extends StatelessWidget {
                               vertical: 2.5,
                             ),
                             decoration: BoxDecoration(
-                              color: boiMelaGreen.withValues(alpha: theme.isDark ? 0.35 : 0.09),
+                              color: boiMelaGreen.withValues(
+                                alpha: theme.isDark ? 0.35 : 0.09,
+                              ),
                               borderRadius: BorderRadius.circular(6),
                             ),
                             child: Text(
@@ -560,7 +577,9 @@ class _CoverArtistCard extends StatelessWidget {
                                   ? 'Commission Open'
                                   : 'Custom Requests',
                               style: TextStyle(
-                                color: theme.isDark ? theme.accentGold : deepTealInk,
+                                color: theme.isDark
+                                    ? theme.accentGold
+                                    : deepTealInk,
                                 fontSize: 10.5,
                                 fontWeight: FontWeight.w600,
                               ),
@@ -654,11 +673,7 @@ class _CoverArtistGridCard extends StatelessWidget {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.center,
             children: [
-              _CoverArtistAvatar(
-                artist: artist,
-                theme: theme,
-                compact: true,
-              ),
+              _CoverArtistAvatar(artist: artist, theme: theme, compact: true),
               const SizedBox(height: 8),
 
               Text(

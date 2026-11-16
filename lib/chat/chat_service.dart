@@ -1,6 +1,7 @@
 import 'dart:convert';
-
 import 'package:flutter/foundation.dart';
+import 'package:firebase_core/firebase_core.dart';
+import '../services/content_api.dart';
 
 import 'chat_model.dart';
 
@@ -9,6 +10,7 @@ class ChatService extends ChangeNotifier {
     Iterable<ChatConversation> conversations = const [],
     Iterable<ChatMessage> messages = const [],
     this.currentUserId = 'current-user',
+    this.persistToMongo = false,
   }) {
     for (final conversation in conversations) {
       if (_conversations.containsKey(conversation.conversationId)) {
@@ -40,6 +42,8 @@ class ChatService extends ChangeNotifier {
       );
     }
   }
+
+  final bool persistToMongo;
 
   factory ChatService.demo() {
     final now = DateTime.now();
@@ -160,12 +164,192 @@ class ChatService extends ChangeNotifier {
     );
   }
 
-  static ChatService shared = ChatService();
+  static ChatService shared = ChatService(persistToMongo: true);
+
+  bool get usesMongo => persistToMongo && Firebase.apps.isNotEmpty;
 
   String currentUserId;
   final Map<String, ChatConversation> _conversations = {};
   final Map<String, List<ChatMessage>> _messages = {};
   int _messageSequence = 0;
+
+  Future<ChatConversation> ensureConversation({
+    required String currentUserId,
+    required String userId,
+    required String userName,
+    String? avatarPath,
+  }) async {
+    final conversation = getOrCreateConversation(
+      currentUserId: currentUserId,
+      userId: userId,
+      userName: userName,
+      avatarPath: avatarPath,
+    );
+    if (!usesMongo) return conversation;
+    final result = await ContentApi().post('/api/conversations', {
+      'recipientUid': userId,
+    });
+    if (result is! Map<String, dynamic> ||
+        result['id'] != conversation.conversationId) {
+      throw const ContentApiException(
+        'The backend returned an invalid conversation.',
+      );
+    }
+    return conversation;
+  }
+
+  Future<void> loadConversations() async {
+    if (!usesMongo) return;
+    final result = await ContentApi().get('/api/conversations');
+    if (result is! List) {
+      throw const ContentApiException(
+        'The backend returned an invalid conversation list.',
+      );
+    }
+    final conversations = result
+        .whereType<Map<String, dynamic>>()
+        .map((json) {
+          final lastMessageAt = json['lastMessageAt'];
+          return ChatConversation(
+            conversationId: json['id'] is String ? json['id'] as String : '',
+            userId: json['userId'] is String ? json['userId'] as String : '',
+            userName: json['userName'] is String
+                ? json['userName'] as String
+                : 'Novelly user',
+            lastMessagePreview: json['lastMessagePreview'] is String
+                ? json['lastMessagePreview'] as String
+                : null,
+            lastMessageAt: lastMessageAt is String
+                ? DateTime.tryParse(lastMessageAt)
+                : null,
+          );
+        })
+        .where((item) => item.conversationId.isNotEmpty)
+        .toList();
+    _conversations
+      ..clear()
+      ..addEntries(
+        conversations.map((item) => MapEntry(item.conversationId, item)),
+      );
+    _messages
+      ..clear()
+      ..addEntries(
+        conversations.map((item) => MapEntry(item.conversationId, [])),
+      );
+    notifyListeners();
+  }
+
+  Future<void> loadMessages(String conversationId) async {
+    if (!usesMongo) return;
+    final result = await ContentApi().get(
+      '/api/conversations/${Uri.encodeComponent(conversationId)}/messages',
+    );
+    if (result is! List) {
+      throw const ContentApiException(
+        'The backend returned an invalid message list.',
+      );
+    }
+    final found =
+        result.whereType<Map<String, dynamic>>().map(_messageFromJson).toList()
+          ..sort((first, second) => first.sentAt.compareTo(second.sentAt));
+    _messages[conversationId] = found;
+    final conversation = _conversations[conversationId];
+    if (conversation != null && found.isNotEmpty) {
+      final last = found.last;
+      _conversations[conversationId] = conversation.copyWith(
+        lastMessagePreview: last.type == ChatMessageType.image
+            ? 'Photo'
+            : last.text,
+        lastMessageAt: last.sentAt,
+      );
+    }
+    notifyListeners();
+  }
+
+  Future<ChatMessage> sendTextMessageToMongo({
+    required String conversationId,
+    required String text,
+  }) async {
+    final trimmedText = text.trim();
+    if (trimmedText.isEmpty) {
+      throw ArgumentError.value(text, 'text', 'Message text cannot be empty.');
+    }
+    if (!usesMongo) {
+      return sendTextMessage(conversationId: conversationId, text: trimmedText);
+    }
+    final result = await ContentApi().post(
+      '/api/conversations/${Uri.encodeComponent(conversationId)}/messages',
+      {'text': trimmedText},
+    );
+    if (result is! Map<String, dynamic>) {
+      throw const ContentApiException(
+        'The backend returned an invalid message.',
+      );
+    }
+    return _addRemoteMessage(_messageFromJson(result));
+  }
+
+  Future<ChatMessage> sendImageMessageToMongo({
+    required String conversationId,
+    required Uint8List imageBytes,
+    required String contentType,
+  }) async {
+    if (!usesMongo) {
+      return sendImageMessage(
+        conversationId: conversationId,
+        imagePath: 'picked-image',
+      );
+    }
+    final result = await ContentApi().post(
+      '/api/conversations/${Uri.encodeComponent(conversationId)}/messages',
+      {
+        'imageBase64': base64Encode(imageBytes),
+        'imageBase64ContentType': contentType,
+      },
+    );
+    if (result is! Map<String, dynamic>) {
+      throw const ContentApiException(
+        'The backend returned an invalid message.',
+      );
+    }
+    return _addRemoteMessage(_messageFromJson(result));
+  }
+
+  ChatMessage _messageFromJson(Map<String, dynamic> json) {
+    final type = json['type'] == 'image'
+        ? ChatMessageType.image
+        : ChatMessageType.text;
+    final sentAt = json['sentAt'];
+    return ChatMessage(
+      messageId: json['id'] is String ? json['id'] as String : '',
+      conversationId: json['conversationId'] is String
+          ? json['conversationId'] as String
+          : '',
+      senderId: json['senderId'] is String ? json['senderId'] as String : '',
+      type: type,
+      text: json['text'] is String ? json['text'] as String : null,
+      imageBytes: json['imageBase64'] is String
+          ? base64Decode(json['imageBase64'] as String)
+          : null,
+      sentAt: sentAt is String
+          ? DateTime.tryParse(sentAt) ?? DateTime.now()
+          : DateTime.now(),
+    );
+  }
+
+  ChatMessage _addRemoteMessage(ChatMessage message) {
+    final conversation = _conversationFor(message.conversationId);
+    _messages[message.conversationId]!.add(message);
+    _conversations[message.conversationId] = conversation.copyWith(
+      lastMessagePreview: message.type == ChatMessageType.image
+          ? 'Photo'
+          : message.text,
+      lastMessageAt: message.sentAt,
+      unreadCount: 0,
+    );
+    notifyListeners();
+    return message;
+  }
 
   List<ChatConversation> get conversations {
     final result = _conversations.values.toList()

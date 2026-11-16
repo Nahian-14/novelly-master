@@ -1,8 +1,7 @@
-import 'dart:io';
-
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../theme/theme_controller.dart';
+import '../widgets/image_provider_for_path.dart';
 
 @immutable
 class PublisherEntry {
@@ -16,8 +15,34 @@ class PublisherEntry {
     this.stallNumber,
     this.establishedYear,
     this.location,
+    this.profileDetails = const {},
     this.isBoiMelaPavilion = true,
   });
+
+  factory PublisherEntry.fromJson(Map<String, dynamic> json) {
+    final publisherData = json['publisherProfile'];
+    final details = publisherData is Map<String, dynamic>
+        ? publisherData
+        : const <String, dynamic>{};
+    final publisherImage = details['imageUrl'];
+    final profileImage = json['profileImageUrl'];
+    final count = json['publishedBookCount'];
+    return PublisherEntry(
+      name: json['name'] is String ? json['name'] as String : 'Publisher',
+      rating: 0,
+      bookCount: count is int ? count : 0,
+      accountId: json['uid'] is String ? json['uid'] as String : '',
+      imagePath: publisherImage is String
+          ? publisherImage
+          : profileImage is String
+          ? profileImage
+          : null,
+      specialty: details['genresPublished'] is String
+          ? details['genresPublished'] as String
+          : null,
+      profileDetails: json,
+    );
+  }
 
   final String name;
   final double rating;
@@ -28,6 +53,7 @@ class PublisherEntry {
   final String? stallNumber;
   final String? establishedYear;
   final String? location;
+  final Map<String, dynamic> profileDetails;
   final bool isBoiMelaPavilion;
 
   /// Meaningful literary specialty for Bangladeshi publishing houses
@@ -62,7 +88,9 @@ class PublisherEntry {
     if (lower.contains('sheba')) return 'Pavilion #115';
     if (lower.contains('batighar')) return 'Pavilion #204';
     if (lower.contains('anyaprokash')) return 'Pavilion #310';
-    if (lower.contains('upl') || lower.contains('university press')) return 'Pavilion #501';
+    if (lower.contains('upl') || lower.contains('university press')) {
+      return 'Pavilion #501';
+    }
     if (lower.contains('ananya')) return 'Stall #290';
     if (lower.contains('kakoli')) return 'Stall #240';
     if (lower.contains('mowla')) return 'Pavilion #310';
@@ -75,18 +103,24 @@ class PublisherEntry {
     if (lower.contains('prothoma')) return 'Karwan Bazar, Dhaka';
     if (lower.contains('sheba')) return 'Segunbagicha, Dhaka';
     if (lower.contains('batighar')) return 'Banglamotor, Dhaka';
-    if (lower.contains('upl') || lower.contains('university press')) return 'Farmgate, Dhaka';
+    if (lower.contains('upl') || lower.contains('university press')) {
+      return 'Farmgate, Dhaka';
+    }
     return 'Banglabazar, Dhaka';
   }
 
   String get effectiveEstd {
-    if (establishedYear != null && establishedYear!.isNotEmpty) return establishedYear!;
+    if (establishedYear != null && establishedYear!.isNotEmpty) {
+      return establishedYear!;
+    }
     final lower = name.toLowerCase();
     if (lower.contains('prothoma')) return '1998';
     if (lower.contains('sheba')) return '1963';
     if (lower.contains('batighar')) return '2005';
     if (lower.contains('anyaprokash')) return '1997';
-    if (lower.contains('upl') || lower.contains('university press')) return '1975';
+    if (lower.contains('upl') || lower.contains('university press')) {
+      return '1975';
+    }
     if (lower.contains('mowla')) return '1954';
     if (lower.contains('kakoli')) return '1972';
     if (lower.contains('ananya')) return '1988';
@@ -132,7 +166,10 @@ class _PublisherDirectoryViewState extends State<PublisherDirectoryView> {
     'Academic & Essays',
   ];
 
-  List<PublisherEntry> _filterPublishers(List<PublisherEntry> list, String query) {
+  List<PublisherEntry> _filterPublishers(
+    List<PublisherEntry> list,
+    String query,
+  ) {
     var result = list;
     final normalized = query.trim().toLowerCase();
 
@@ -233,7 +270,10 @@ class _PublisherDirectoryViewState extends State<PublisherDirectoryView> {
           );
         }
 
-        final visiblePublishers = _filterPublishers(widget.publishers, widget.query);
+        final visiblePublishers = _filterPublishers(
+          widget.publishers,
+          widget.query,
+        );
 
         return LayoutBuilder(
           builder: (context, constraints) {
@@ -284,18 +324,23 @@ class _PublisherDirectoryViewState extends State<PublisherDirectoryView> {
               borderRadius: BorderRadius.circular(20),
               child: AnimatedContainer(
                 duration: const Duration(milliseconds: 200),
-                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 7.5),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 14,
+                  vertical: 7.5,
+                ),
                 decoration: BoxDecoration(
                   color: isSelected
                       ? boiMelaGreen
                       : (theme.isDark
-                          ? const Color(0xFF11262B)
-                          : boiMelaGreen.withValues(alpha: 0.08)),
+                            ? const Color(0xFF11262B)
+                            : boiMelaGreen.withValues(alpha: 0.08)),
                   borderRadius: BorderRadius.circular(20),
                   border: Border.all(
                     color: isSelected
                         ? (theme.isDark ? theme.accentGold : boiMelaGreen)
-                        : boiMelaGreen.withValues(alpha: theme.isDark ? 0.5 : 0.25),
+                        : boiMelaGreen.withValues(
+                            alpha: theme.isDark ? 0.5 : 0.25,
+                          ),
                     width: isSelected ? 1.5 : 1,
                   ),
                   boxShadow: isSelected
@@ -327,7 +372,9 @@ class _PublisherDirectoryViewState extends State<PublisherDirectoryView> {
                             ? Colors.white
                             : (theme.isDark ? Colors.white70 : deepTealInk),
                         fontSize: 12.5,
-                        fontWeight: isSelected ? FontWeight.w700 : FontWeight.w600,
+                        fontWeight: isSelected
+                            ? FontWeight.w700
+                            : FontWeight.w600,
                       ),
                     ),
                   ],
@@ -433,10 +480,7 @@ class _PublisherDirectoryViewState extends State<PublisherDirectoryView> {
             const SizedBox(height: 6),
             Text(
               'Try clearing search keywords or selecting "All".',
-              style: TextStyle(
-                color: theme.mutedColor,
-                fontSize: 13,
-              ),
+              style: TextStyle(color: theme.mutedColor, fontSize: 13),
             ),
             const SizedBox(height: 14),
             TextButton.icon(
@@ -446,9 +490,7 @@ class _PublisherDirectoryViewState extends State<PublisherDirectoryView> {
               },
               icon: const Icon(Icons.refresh_rounded, size: 16),
               label: const Text('Reset Filter'),
-              style: TextButton.styleFrom(
-                foregroundColor: boiMelaGreen,
-              ),
+              style: TextButton.styleFrom(foregroundColor: boiMelaGreen),
             ),
           ],
         ),
@@ -482,7 +524,8 @@ class _PublisherAvatar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final size = compact ? 58.0 : 66.0;
-    final hasImage = publisher.imagePath != null && publisher.imagePath!.isNotEmpty;
+    final hasImage =
+        publisher.imagePath != null && publisher.imagePath!.isNotEmpty;
 
     return Container(
       width: size,
@@ -493,10 +536,7 @@ class _PublisherAvatar extends StatelessWidget {
         gradient: const LinearGradient(
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
-          colors: [
-            boiMelaGreen,
-            deepTealInk,
-          ],
+          colors: [boiMelaGreen, deepTealInk],
         ),
         boxShadow: [
           BoxShadow(
@@ -509,12 +549,14 @@ class _PublisherAvatar extends StatelessWidget {
       child: Container(
         decoration: BoxDecoration(
           shape: BoxShape.circle,
-          color: theme.isDark ? const Color(0xFF11262B) : const Color(0xFFF0F5F6),
+          color: theme.isDark
+              ? const Color(0xFF11262B)
+              : const Color(0xFFF0F5F6),
         ),
         child: ClipOval(
           child: hasImage
-              ? Image.file(
-                  File(publisher.imagePath!),
+              ? Image(
+                  image: imageProviderForPath(publisher.imagePath!),
                   width: size,
                   height: size,
                   fit: BoxFit.cover,
@@ -719,14 +761,18 @@ class _PublisherCard extends StatelessWidget {
                             children: [
                               Icon(
                                 Icons.menu_book_rounded,
-                                color: theme.isDark ? theme.accentGold : boiMelaGreen,
+                                color: theme.isDark
+                                    ? theme.accentGold
+                                    : boiMelaGreen,
                                 size: 12,
                               ),
                               const SizedBox(width: 4),
                               Text(
                                 '${publisher.bookCount}',
                                 style: TextStyle(
-                                  color: theme.isDark ? Colors.white : deepTealInk,
+                                  color: theme.isDark
+                                      ? Colors.white
+                                      : deepTealInk,
                                   fontSize: 11.5,
                                   fontWeight: FontWeight.w700,
                                 ),
@@ -735,7 +781,9 @@ class _PublisherCard extends StatelessWidget {
                               Text(
                                 'books',
                                 style: TextStyle(
-                                  color: theme.isDark ? Colors.white70 : theme.mutedColor,
+                                  color: theme.isDark
+                                      ? Colors.white70
+                                      : theme.mutedColor,
                                   fontSize: 11,
                                 ),
                               ),
@@ -750,13 +798,17 @@ class _PublisherCard extends StatelessWidget {
                             vertical: 2.5,
                           ),
                           decoration: BoxDecoration(
-                            color: boiMelaGreen.withValues(alpha: theme.isDark ? 0.3 : 0.1),
+                            color: boiMelaGreen.withValues(
+                              alpha: theme.isDark ? 0.3 : 0.1,
+                            ),
                             borderRadius: BorderRadius.circular(6),
                           ),
                           child: Text(
                             publisher.effectiveStallNumber,
                             style: TextStyle(
-                              color: theme.isDark ? Colors.white70 : deepTealInk,
+                              color: theme.isDark
+                                  ? Colors.white70
+                                  : deepTealInk,
                               fontSize: 10.5,
                               fontWeight: FontWeight.w600,
                             ),
@@ -780,7 +832,9 @@ class _PublisherCard extends StatelessWidget {
                         ? boiMelaGreen.withValues(alpha: 0.45)
                         : boiMelaGreen.withValues(alpha: 0.10),
                     border: Border.all(
-                      color: boiMelaGreen.withValues(alpha: theme.isDark ? 0.6 : 0.3),
+                      color: boiMelaGreen.withValues(
+                        alpha: theme.isDark ? 0.6 : 0.3,
+                      ),
                       width: 1,
                     ),
                   ),
@@ -903,7 +957,10 @@ class _PublisherGridCard extends StatelessWidget {
                     ],
                   ),
                   Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 6,
+                      vertical: 2,
+                    ),
                     decoration: BoxDecoration(
                       color: theme.isDark
                           ? boiMelaGreen.withValues(alpha: 0.35)

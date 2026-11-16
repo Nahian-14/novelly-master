@@ -1,13 +1,14 @@
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
 
-import '../chat/chat_list.dart';
 import '../main_page/discover.dart';
 import '../main_page/novelly_bottom_navigation.dart';
 import '../main_page/writer_profile.dart';
 import '../theme/theme_controller.dart';
 import 'cover_design.dart';
 import 'cover_design_form.dart';
-import 'cover_artist_profile.dart';
+import '../services/content_api.dart';
 
 const _ink = Color(0xFF173B43);
 const _gold = Color(0xFFC89543);
@@ -19,7 +20,7 @@ class MyDesignsScreen extends StatefulWidget {
   const MyDesignsScreen({
     this.covers = const [],
     this.drafts = const [],
-    super.key, 
+    super.key,
   });
 
   final List<CoverDesign> covers;
@@ -46,6 +47,58 @@ class _MyDesignsScreenState extends State<MyDesignsScreen> {
       initialCovers: widget.covers,
       initialDrafts: widget.drafts,
     );
+    _loadDesigns();
+  }
+
+  Future<void> _loadDesigns() async {
+    try {
+      final result = await ContentApi().get('/api/cover-designs/mine');
+      if (result is! List) {
+        throw const ContentApiException(
+          'The backend returned an invalid design list.',
+        );
+      }
+      final designs = result
+          .whereType<Map<String, dynamic>>()
+          .map(_designFromJson)
+          .toList();
+      if (!mounted) return;
+      setState(() {
+        _workspace.covers
+          ..clear()
+          ..addAll(designs.where((design) => !design.isDraft));
+        _workspace.drafts
+          ..clear()
+          ..addAll(designs.where((design) => design.isDraft));
+      });
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Could not load your designs: $error')),
+      );
+    }
+  }
+
+  CoverDesign _designFromJson(Map<String, dynamic> json) {
+    final image = json['imageBase64'];
+    final color = json['color'];
+    final api = ContentApi();
+    return CoverDesign(
+      id: json['id'] is String ? json['id'] as String : '',
+      title: json['title'] is String ? json['title'] as String : '',
+      creator: json['creator'] is String ? json['creator'] as String : '',
+      author: json['author'] is String ? json['author'] as String : '',
+      year: json['year'] is String ? json['year'] as String : '',
+      color: Color(color is int ? color : 0xFFC89543),
+      imageBytes: image is String ? base64Decode(image) : null,
+      imageUrl: api.absoluteUrl(
+        json['imageUrl'] is String ? json['imageUrl'] as String : null,
+      ),
+      isDraft: json['status'] != 'published',
+      imageContentType: json['imageContentType'] is String
+          ? json['imageContentType'] as String
+          : 'image/jpeg',
+    );
   }
 
   Future<void> _addCover() async {
@@ -54,12 +107,7 @@ class _MyDesignsScreenState extends State<MyDesignsScreen> {
       creator: WriterProfileScreen.currentUser.name,
     );
     if (design == null || !mounted) return;
-    setState(() {
-      (design.isDraft ? _workspace.drafts : _workspace.covers).insert(
-        0,
-        design,
-      );
-    });
+    await _saveDesign(null, design);
   }
 
   Future<void> _editCover(CoverDesign current) async {
@@ -69,16 +117,62 @@ class _MyDesignsScreenState extends State<MyDesignsScreen> {
       design: current,
     );
     if (design == null || !mounted) return;
-    setState(() {
-      final previousList = current.isDraft
-          ? _workspace.drafts
-          : _workspace.covers;
-      previousList.remove(current);
-      (design.isDraft ? _workspace.drafts : _workspace.covers).insert(
-        0,
-        design,
+    await _saveDesign(current, design);
+  }
+
+  Future<void> _saveDesign(CoverDesign? previous, CoverDesign design) async {
+    final api = ContentApi();
+    try {
+      final body = <String, dynamic>{
+        'title': design.title,
+        'creator': design.creator,
+        'author': design.author,
+        'year': design.year,
+        'color': design.color.toARGB32(),
+        'imageBase64': base64Encode(design.imageBytes!),
+        'imageBase64ContentType': design.imageContentType,
+        'status': design.isDraft ? 'draft' : 'published',
+      };
+      final response = previous == null || previous.id.isEmpty
+          ? await api.post('/api/cover-designs', body)
+          : await api.put(
+              '/api/cover-designs/${Uri.encodeComponent(previous.id)}',
+              body,
+            );
+      if (response is! Map<String, dynamic>) {
+        throw const ContentApiException(
+          'The backend returned an invalid design.',
+        );
+      }
+      var saved = _designFromJson(response);
+      if (!design.isDraft && saved.isDraft) {
+        final published = await api.patch(
+          '/api/cover-designs/${Uri.encodeComponent(saved.id)}/publish',
+        );
+        if (published is! Map<String, dynamic>) {
+          throw const ContentApiException(
+            'The backend returned an invalid design.',
+          );
+        }
+        saved = _designFromJson(published);
+      }
+      if (!mounted) return;
+      setState(() {
+        if (previous != null) {
+          _workspace.covers.removeWhere((item) => item.id == previous.id);
+          _workspace.drafts.removeWhere((item) => item.id == previous.id);
+        }
+        (saved.isDraft ? _workspace.drafts : _workspace.covers).insert(
+          0,
+          saved,
+        );
+      });
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Could not save your design: $error')),
       );
-    });
+    }
   }
 
   void _navigate(NovellyNavigationDestination destination) {
@@ -264,9 +358,7 @@ class _MyDesignsScreenState extends State<MyDesignsScreen> {
                         tooltip: 'Cover options',
                         onSelected: (action) {
                           if (action == 'edit') _editCover(design);
-                          if (action == 'delete') {
-                            setState(() => designs.remove(design));
-                          }
+                          if (action == 'delete') _deleteDesign(design);
                         },
                         itemBuilder: (_) => const [
                           PopupMenuItem(value: 'edit', child: Text('Edit')),
@@ -313,6 +405,25 @@ class _MyDesignsScreenState extends State<MyDesignsScreen> {
         );
       },
     );
+  }
+
+  Future<void> _deleteDesign(CoverDesign design) async {
+    try {
+      await ContentApi().delete(
+        '/api/cover-designs/${Uri.encodeComponent(design.id)}',
+      );
+      if (mounted) {
+        setState(() {
+          _workspace.covers.removeWhere((item) => item.id == design.id);
+          _workspace.drafts.removeWhere((item) => item.id == design.id);
+        });
+      }
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Could not delete the design: $error')),
+      );
+    }
   }
 
   Widget _header(bool compact) => Row(

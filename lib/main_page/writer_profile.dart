@@ -1,5 +1,3 @@
-import 'dart:io';
-
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import '../logout_confirmation.dart';
@@ -9,6 +7,8 @@ import '../chat/direct_chat.dart';
 import '../publisher/publisher_profile.dart';
 import '../theme/theme_controller.dart';
 import 'novelly_bottom_navigation.dart';
+import '../services/content_api.dart';
+import '../widgets/image_provider_for_path.dart';
 
 const _paper = Color(0xFFF4F0E7);
 const _line = Color(0xFFDDD5C7);
@@ -42,9 +42,77 @@ class WriterProfile {
     this.isPublisher = false,
     this.isCoverArtist = false,
     this.books = const [],
+    this.publicBookCount,
     this.followerIds = const [],
     this.publishers = const [],
   });
+
+  factory WriterProfile.fromJson(Map<String, dynamic> json) {
+    final role = json['role'] is String ? json['role'] as String : '';
+    final publishers = json['publishers'];
+    final books = json['books'];
+    return WriterProfile(
+      name: json['name'] is String ? json['name'] as String : 'Novelly user',
+      accountId: json['uid'] is String ? json['uid'] as String : '',
+      goodreads: json['goodreads'] is String ? json['goodreads'] as String : '',
+      facebook: json['facebook'] is String ? json['facebook'] as String : '',
+      instagram: json['instagram'] is String ? json['instagram'] as String : '',
+      website: json['website'] is String ? json['website'] as String : '',
+      about: json['about'] is String ? json['about'] as String : '',
+      profileImagePath: json['profileImageUrl'] is String
+          ? json['profileImageUrl'] as String
+          : null,
+      designSpecialization: json['designSpecialization'] is String
+          ? json['designSpecialization'] as String
+          : '',
+      artStyle: json['artStyle'] is String ? json['artStyle'] as String : '',
+      servicesOffered: json['servicesOffered'] is String
+          ? json['servicesOffered'] as String
+          : '',
+      yearsOfExperience: json['yearsOfExperience'] is String
+          ? json['yearsOfExperience'] as String
+          : '',
+      designTools: json['designTools'] is String
+          ? json['designTools'] as String
+          : '',
+      workAvailability: json['workAvailability'] is String
+          ? json['workAvailability'] as String
+          : '',
+      acceptsCustomRequests: json['acceptsCustomRequests'] is String
+          ? json['acceptsCustomRequests'] as String
+          : '',
+      pricingPackages: json['pricingPackages'] is String
+          ? json['pricingPackages'] as String
+          : '',
+      averageDeliveryTime: json['averageDeliveryTime'] is String
+          ? json['averageDeliveryTime'] as String
+          : '',
+      revisionPolicy: json['revisionPolicy'] is String
+          ? json['revisionPolicy'] as String
+          : '',
+      isWriter: role == 'Writer' || role == 'Writer and Publisher',
+      isPublisher: role == 'Publisher' || role == 'Writer and Publisher',
+      isCoverArtist: role == 'Cover Artist',
+      publishers: publishers is List
+          ? publishers.whereType<String>().toList()
+          : const [],
+      books: books is List
+          ? books.whereType<Map<String, dynamic>>().map((book) {
+              final rating = book['rating'];
+              return WriterBook(
+                title: book['title'] is String ? book['title'] as String : '',
+                rating: rating is num ? rating.toDouble() : 0,
+                imagePath: book['imageUrl'] is String
+                    ? book['imageUrl'] as String
+                    : null,
+              );
+            }).toList()
+          : const [],
+      publicBookCount: json['publishedBookCount'] is int
+          ? json['publishedBookCount'] as int
+          : null,
+    );
+  }
 
   final String name;
   final String accountId;
@@ -68,6 +136,7 @@ class WriterProfile {
   final bool isPublisher;
   final bool isCoverArtist;
   final List<WriterBook> books;
+  final int? publicBookCount;
   final List<String> followerIds;
   final List<String> publishers;
 
@@ -94,11 +163,12 @@ class WriterProfile {
     isPublisher: isPublisher,
     isCoverArtist: isCoverArtist,
     books: books ?? this.books,
+    publicBookCount: publicBookCount,
     followerIds: followerIds,
     publishers: publishers,
   );
 
-  int get publishedBookCount => books.length;
+  int get publishedBookCount => publicBookCount ?? books.length;
   int get reviewCount =>
       books.fold(0, (total, book) => total + book.reviews.length);
   int get followerCount => followerIds.length;
@@ -113,11 +183,13 @@ class WriterBook {
     required this.title,
     this.rating = 0.0,
     this.reviews = const [],
+    this.imagePath,
   });
 
   final String title;
   final double rating;
   final List<WriterBookReview> reviews;
+  final String? imagePath;
 }
 
 @immutable
@@ -168,7 +240,40 @@ class _WriterProfileScreenState extends State<WriterProfileScreen> {
   void initState() {
     super.initState();
     if (widget.isCurrentUser) {
-      _avatarPath = WriterProfileScreen.currentAvatarPath;
+      _avatarPath =
+          WriterProfileScreen.currentAvatarPath ??
+          WriterProfileScreen.currentUser.profileImagePath;
+    } else {
+      _avatarPath = _profile.profileImagePath;
+    }
+    if (_profile.accountId.isNotEmpty) _loadProfile(_profile.accountId);
+  }
+
+  Future<void> _loadProfile(String uid) async {
+    try {
+      final result = await ContentApi().get(
+        '/api/profiles/${Uri.encodeComponent(uid)}',
+      );
+      if (result is! Map<String, dynamic>) {
+        throw const ContentApiException(
+          'The backend returned an invalid writer profile.',
+        );
+      }
+      final profile = WriterProfile.fromJson(result);
+      if (!mounted) return;
+      setState(() {
+        _profile = profile;
+        _avatarPath = profile.profileImagePath;
+      });
+      if (widget.isCurrentUser) {
+        WriterProfileScreen.currentUser = profile;
+        WriterProfileScreen.currentAvatarPath = profile.profileImagePath;
+      }
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Could not refresh your profile: $error')),
+      );
     }
   }
 
@@ -179,6 +284,26 @@ class _WriterProfileScreenState extends State<WriterProfileScreen> {
           _ProfileEditDialog(profile: _profile, avatarPath: _avatarPath),
     );
     if (result == null || !mounted) return;
+
+    final api = ContentApi();
+    try {
+      await api.put('/api/profile/public', {
+        'name': result.profile.name,
+        'about': result.profile.about,
+        'goodreads': result.profile.goodreads,
+        'facebook': result.profile.facebook,
+        'instagram': result.profile.instagram,
+        'website': result.profile.website,
+        'publishers': result.profile.publishers,
+        ...await api.imagePayload('profileImageBase64', result.avatarPath),
+      });
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Could not save your profile: $error')),
+      );
+      return;
+    }
 
     setState(() {
       _profile = result.profile;
@@ -263,14 +388,18 @@ class _WriterProfileScreenState extends State<WriterProfileScreen> {
                                   onPressed: () => Navigator.maybePop(context),
                                   icon: Icon(
                                     Icons.arrow_back_ios_new_rounded,
-                                    color: theme.isDark ? Colors.white : _deepTealInk,
+                                    color: theme.isDark
+                                        ? Colors.white
+                                        : _deepTealInk,
                                     size: 20,
                                   ),
                                 ),
                                 Text(
                                   'Author Profile',
                                   style: TextStyle(
-                                    color: theme.isDark ? Colors.white : _deepTealInk,
+                                    color: theme.isDark
+                                        ? Colors.white
+                                        : _deepTealInk,
                                     fontFamily: 'Georgia',
                                     fontSize: 16,
                                     fontWeight: FontWeight.w700,
@@ -291,13 +420,17 @@ class _WriterProfileScreenState extends State<WriterProfileScreen> {
                                             ? const Color(0xFF15333B)
                                             : const Color(0xFFE8F1F2),
                                         border: Border.all(
-                                          color: _boiMelaGreen.withValues(alpha: 0.35),
+                                          color: _boiMelaGreen.withValues(
+                                            alpha: 0.35,
+                                          ),
                                           width: 1,
                                         ),
                                       ),
                                       child: Icon(
                                         Icons.settings_outlined,
-                                        color: theme.isDark ? Colors.white : _deepTealInk,
+                                        color: theme.isDark
+                                            ? Colors.white
+                                            : _deepTealInk,
                                         size: 20,
                                       ),
                                     ),
@@ -341,8 +474,8 @@ class _WriterProfileScreenState extends State<WriterProfileScreen> {
                             libraryLabel: account.isCoverArtist
                                 ? 'My Designs'
                                 : account.isPublisher
-                                    ? 'My Publishing'
-                                    : 'My Book',
+                                ? 'My Publishing'
+                                : 'My Book',
                             libraryIcon: account.isCoverArtist
                                 ? Icons.palette_outlined
                                 : Icons.menu_book_outlined,
@@ -371,7 +504,11 @@ class _WriterProfileScreenState extends State<WriterProfileScreen> {
   }
 
   /// Compact Hero Profile Card with balanced green accent & white/mint ratio
-  Widget _profileCard(bool editable, NovellyThemeData theme, bool compact) => Container(
+  Widget _profileCard(
+    bool editable,
+    NovellyThemeData theme,
+    bool compact,
+  ) => Container(
     padding: const EdgeInsets.all(16),
     decoration: _cardDecoration(theme),
     child: Column(
@@ -391,7 +528,9 @@ class _WriterProfileScreenState extends State<WriterProfileScreen> {
                 ),
                 boxShadow: [
                   BoxShadow(
-                    color: _boiMelaGreen.withValues(alpha: theme.isDark ? 0.35 : 0.22),
+                    color: _boiMelaGreen.withValues(
+                      alpha: theme.isDark ? 0.35 : 0.22,
+                    ),
                     blurRadius: 8,
                     offset: const Offset(0, 2),
                   ),
@@ -399,12 +538,18 @@ class _WriterProfileScreenState extends State<WriterProfileScreen> {
               ),
               child: CircleAvatar(
                 radius: compact ? 36 : 42,
-                backgroundColor: theme.isDark ? const Color(0xFF11262B) : const Color(0xFFF0F5F6),
+                backgroundColor: theme.isDark
+                    ? const Color(0xFF11262B)
+                    : const Color(0xFFF0F5F6),
                 backgroundImage: _avatarPath == null
                     ? null
-                    : FileImage(File(_avatarPath!)),
+                    : imageProviderForPath(_avatarPath!),
                 child: _avatarPath == null
-                    ? Icon(Icons.person, color: theme.isDark ? theme.accentGold : _boiMelaGreen, size: 38)
+                    ? Icon(
+                        Icons.person,
+                        color: theme.isDark ? theme.accentGold : _boiMelaGreen,
+                        size: 38,
+                      )
                     : null,
               ),
             ),
@@ -464,10 +609,7 @@ class _WriterProfileScreenState extends State<WriterProfileScreen> {
                   const SizedBox(height: 2),
                   Text(
                     'Author of ${_profile.publishedBookCount} books',
-                    style: TextStyle(
-                      color: theme.mutedColor,
-                      fontSize: 12,
-                    ),
+                    style: TextStyle(color: theme.mutedColor, fontSize: 12),
                   ),
                   const SizedBox(height: 4),
 
@@ -549,7 +691,9 @@ class _WriterProfileScreenState extends State<WriterProfileScreen> {
         Container(
           padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 4),
           decoration: BoxDecoration(
-            color: theme.isDark ? const Color(0xFF15333B) : const Color(0xFFE8F1F2),
+            color: theme.isDark
+                ? const Color(0xFF15333B)
+                : const Color(0xFFE8F1F2),
             borderRadius: BorderRadius.circular(12),
             border: Border.all(
               color: theme.isDark
@@ -630,41 +774,44 @@ class _WriterProfileScreenState extends State<WriterProfileScreen> {
     String value,
     IconData icon,
     NovellyThemeData theme,
-  ) =>
-      Expanded(
-        child: Column(
+  ) => Expanded(
+    child: Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Row(
+          mainAxisAlignment: MainAxisAlignment.center,
           mainAxisSize: MainAxisSize.min,
           children: [
-            Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Icon(icon, color: theme.isDark ? theme.accentGold : _boiMelaGreen, size: 15),
-                const SizedBox(width: 4),
-                Text(
-                  value,
-                  style: TextStyle(
-                    color: theme.isDark ? Colors.white : _deepTealInk,
-                    fontSize: 15,
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-              ],
+            Icon(
+              icon,
+              color: theme.isDark ? theme.accentGold : _boiMelaGreen,
+              size: 15,
             ),
-            const SizedBox(height: 1),
+            const SizedBox(width: 4),
             Text(
-              label,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
+              value,
               style: TextStyle(
-                color: theme.mutedColor,
-                fontSize: 10.5,
-                fontWeight: FontWeight.w500,
+                color: theme.isDark ? Colors.white : _deepTealInk,
+                fontSize: 15,
+                fontWeight: FontWeight.w700,
               ),
             ),
           ],
         ),
-      );
+        const SizedBox(height: 1),
+        Text(
+          label,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: TextStyle(
+            color: theme.mutedColor,
+            fontSize: 10.5,
+            fontWeight: FontWeight.w500,
+          ),
+        ),
+      ],
+    ),
+  );
 
   Widget _aboutCard(NovellyThemeData theme) {
     return Container(
@@ -675,7 +822,11 @@ class _WriterProfileScreenState extends State<WriterProfileScreen> {
         children: [
           Row(
             children: [
-              Icon(Icons.history_edu_rounded, color: theme.isDark ? theme.accentGold : _boiMelaGreen, size: 18),
+              Icon(
+                Icons.history_edu_rounded,
+                color: theme.isDark ? theme.accentGold : _boiMelaGreen,
+                size: 18,
+              ),
               const SizedBox(width: 6),
               _sectionTitle('About the Author', theme, fontSize: 15),
             ],
@@ -728,10 +879,18 @@ class _WriterProfileScreenState extends State<WriterProfileScreen> {
         children: [
           Row(
             children: [
-              Icon(Icons.auto_stories_rounded, color: theme.isDark ? theme.accentGold : _boiMelaGreen, size: 18),
+              Icon(
+                Icons.auto_stories_rounded,
+                color: theme.isDark ? theme.accentGold : _boiMelaGreen,
+                size: 18,
+              ),
               const SizedBox(width: 6),
               Expanded(
-                child: _sectionTitle('Books by ${_profile.name}', theme, fontSize: 15),
+                child: _sectionTitle(
+                  'Books by ${_profile.name}',
+                  theme,
+                  fontSize: 15,
+                ),
               ),
             ],
           ),
@@ -749,7 +908,8 @@ class _WriterProfileScreenState extends State<WriterProfileScreen> {
                   mainAxisSpacing: 10,
                   childAspectRatio: 2.3,
                 ),
-                itemBuilder: (context, index) => _bookTile(_profile.books[index], theme),
+                itemBuilder: (context, index) =>
+                    _bookTile(_profile.books[index], theme),
               );
             },
           ),
@@ -759,7 +919,11 @@ class _WriterProfileScreenState extends State<WriterProfileScreen> {
               onPressed: () => ScaffoldMessenger.of(context).showSnackBar(
                 const SnackBar(content: Text('All books are shown here.')),
               ),
-              icon: Icon(Icons.chevron_right_rounded, color: theme.isDark ? theme.accentGold : _boiMelaGreen, size: 18),
+              icon: Icon(
+                Icons.chevron_right_rounded,
+                color: theme.isDark ? theme.accentGold : _boiMelaGreen,
+                size: 18,
+              ),
               label: Text(
                 'View all books (${_profile.publishedBookCount})',
                 style: TextStyle(
@@ -768,9 +932,7 @@ class _WriterProfileScreenState extends State<WriterProfileScreen> {
                   fontWeight: FontWeight.w600,
                 ),
               ),
-              style: TextButton.styleFrom(
-                visualDensity: VisualDensity.compact,
-              ),
+              style: TextButton.styleFrom(visualDensity: VisualDensity.compact),
             ),
           ),
         ],
@@ -787,7 +949,11 @@ class _WriterProfileScreenState extends State<WriterProfileScreen> {
         children: [
           Row(
             children: [
-              Icon(Icons.apartment_rounded, color: theme.isDark ? theme.accentGold : _boiMelaGreen, size: 18),
+              Icon(
+                Icons.apartment_rounded,
+                color: theme.isDark ? theme.accentGold : _boiMelaGreen,
+                size: 18,
+              ),
               const SizedBox(width: 6),
               _sectionTitle('Worked with', theme, fontSize: 15),
             ],
@@ -796,182 +962,216 @@ class _WriterProfileScreenState extends State<WriterProfileScreen> {
           Wrap(
             spacing: 8,
             runSpacing: 8,
-            children: _profile.publishers.map((p) => _publisher(p, theme)).toList(),
+            children: _profile.publishers
+                .map((p) => _publisher(p, theme))
+                .toList(),
           ),
         ],
       ),
     );
   }
 
-  Widget _sectionTitle(String title, NovellyThemeData theme, {double fontSize = 18}) =>
-      Text(
-        title,
-        style: TextStyle(
-          color: theme.isDark ? Colors.white : _deepTealInk,
-          fontFamily: 'Georgia',
-          fontWeight: FontWeight.w700,
-          fontSize: fontSize,
-        ),
-      );
+  Widget _sectionTitle(
+    String title,
+    NovellyThemeData theme, {
+    double fontSize = 18,
+  }) => Text(
+    title,
+    style: TextStyle(
+      color: theme.isDark ? Colors.white : _deepTealInk,
+      fontFamily: 'Georgia',
+      fontWeight: FontWeight.w700,
+      fontSize: fontSize,
+    ),
+  );
 
   Widget _bookTile(WriterBook book, NovellyThemeData theme) => Container(
-        decoration: BoxDecoration(
-          color: theme.isDark
-              ? _boiMelaGreen.withValues(alpha: 0.35)
-              : const Color(0xFFE8F1F2),
-          borderRadius: BorderRadius.circular(10),
-          border: Border.all(
-            color: theme.isDark
-                ? _boiMelaGreen.withValues(alpha: 0.6)
-                : _boiMelaGreen.withValues(alpha: 0.25),
-            width: 0.8,
+    decoration: BoxDecoration(
+      color: theme.isDark
+          ? _boiMelaGreen.withValues(alpha: 0.35)
+          : const Color(0xFFE8F1F2),
+      borderRadius: BorderRadius.circular(10),
+      border: Border.all(
+        color: theme.isDark
+            ? _boiMelaGreen.withValues(alpha: 0.6)
+            : _boiMelaGreen.withValues(alpha: 0.25),
+        width: 0.8,
+      ),
+    ),
+    clipBehavior: Clip.antiAlias,
+    child: Row(
+      children: [
+        SizedBox(
+          width: 48,
+          height: double.infinity,
+          child: book.imagePath == null || book.imagePath!.isEmpty
+              ? Container(
+                  color: _boiMelaGreen,
+                  child: const Center(
+                    child: Icon(
+                      Icons.menu_book_rounded,
+                      color: Color(0xFFE5AE4D),
+                      size: 18,
+                    ),
+                  ),
+                )
+              : Image(
+                  image: imageProviderForPath(book.imagePath!),
+                  fit: BoxFit.cover,
+                  errorBuilder: (_, _, _) => Container(
+                    color: _boiMelaGreen,
+                    child: const Center(
+                      child: Icon(
+                        Icons.menu_book_rounded,
+                        color: Color(0xFFE5AE4D),
+                        size: 18,
+                      ),
+                    ),
+                  ),
+                ),
+        ),
+        Expanded(
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 8),
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  book.title,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: theme.isDark ? Colors.white : _deepTealInk,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  '${book.rating.toStringAsFixed(1)} ★',
+                  style: const TextStyle(
+                    color: Color(0xFFE5AE4D),
+                    fontSize: 10.5,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ],
+            ),
           ),
         ),
-        clipBehavior: Clip.antiAlias,
-        child: Row(
-          children: [
-            Container(
-              width: 36,
-              color: _boiMelaGreen,
-              child: const Center(
-                child: Icon(Icons.menu_book_rounded, color: Color(0xFFE5AE4D), size: 18),
-              ),
-            ),
-            Expanded(
-              child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 8),
-                child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      book.title,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        color: theme.isDark ? Colors.white : _deepTealInk,
-                        fontSize: 12,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                    const SizedBox(height: 2),
-                    Text(
-                      '${book.rating.toStringAsFixed(1)} ★',
-                      style: const TextStyle(
-                        color: Color(0xFFE5AE4D),
-                        fontSize: 10.5,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          ],
-        ),
-      );
+      ],
+    ),
+  );
 
   Widget _publisher(String name, NovellyThemeData theme) => Container(
-        padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 6),
-        decoration: BoxDecoration(
-          color: theme.isDark
-              ? _boiMelaGreen.withValues(alpha: 0.35)
-              : const Color(0xFFE8F1F2),
-          borderRadius: BorderRadius.circular(8),
-          border: Border.all(
-            color: theme.isDark
-                ? _boiMelaGreen.withValues(alpha: 0.6)
-                : _boiMelaGreen.withValues(alpha: 0.25),
-            width: 0.8,
+    padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 6),
+    decoration: BoxDecoration(
+      color: theme.isDark
+          ? _boiMelaGreen.withValues(alpha: 0.35)
+          : const Color(0xFFE8F1F2),
+      borderRadius: BorderRadius.circular(8),
+      border: Border.all(
+        color: theme.isDark
+            ? _boiMelaGreen.withValues(alpha: 0.6)
+            : _boiMelaGreen.withValues(alpha: 0.25),
+        width: 0.8,
+      ),
+    ),
+    child: Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Container(
+          padding: const EdgeInsets.all(4),
+          decoration: const BoxDecoration(
+            shape: BoxShape.circle,
+            color: _boiMelaGreen,
+          ),
+          child: const Icon(
+            Icons.apartment_rounded,
+            size: 11,
+            color: Colors.white,
           ),
         ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Container(
-              padding: const EdgeInsets.all(4),
-              decoration: const BoxDecoration(
-                shape: BoxShape.circle,
-                color: _boiMelaGreen,
-              ),
-              child: const Icon(Icons.apartment_rounded, size: 11, color: Colors.white),
-            ),
-            const SizedBox(width: 6),
-            Text(
-              name,
-              style: TextStyle(
-                fontSize: 11.5,
-                color: theme.isDark ? Colors.white : _deepTealInk,
-                fontWeight: FontWeight.w600,
-              ),
-            ),
-          ],
+        const SizedBox(width: 6),
+        Text(
+          name,
+          style: TextStyle(
+            fontSize: 11.5,
+            color: theme.isDark ? Colors.white : _deepTealInk,
+            fontWeight: FontWeight.w600,
+          ),
         ),
-      );
+      ],
+    ),
+  );
 
   Widget _socialLink(
     String label,
     String value,
     IconData icon,
     NovellyThemeData theme,
-  ) =>
-      Tooltip(
-        message: value,
-        child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
-          decoration: BoxDecoration(
-            color: theme.isDark
-                ? _boiMelaGreen.withValues(alpha: 0.35)
-                : const Color(0xFFE8F1F2),
-            borderRadius: BorderRadius.circular(6),
-            border: Border.all(
-              color: theme.isDark
-                  ? _boiMelaGreen.withValues(alpha: 0.6)
-                  : _boiMelaGreen.withValues(alpha: 0.25),
-              width: 0.8,
+  ) => Tooltip(
+    message: value,
+    child: Container(
+      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
+      decoration: BoxDecoration(
+        color: theme.isDark
+            ? _boiMelaGreen.withValues(alpha: 0.35)
+            : const Color(0xFFE8F1F2),
+        borderRadius: BorderRadius.circular(6),
+        border: Border.all(
+          color: theme.isDark
+              ? _boiMelaGreen.withValues(alpha: 0.6)
+              : _boiMelaGreen.withValues(alpha: 0.25),
+          width: 0.8,
+        ),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(
+            icon,
+            size: 13,
+            color: theme.isDark ? theme.accentGold : _boiMelaGreen,
+          ),
+          const SizedBox(width: 4),
+          Text(
+            label,
+            style: TextStyle(
+              fontSize: 10.5,
+              color: theme.isDark ? Colors.white : _deepTealInk,
+              fontWeight: FontWeight.w600,
             ),
           ),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(icon, size: 13, color: theme.isDark ? theme.accentGold : _boiMelaGreen),
-              const SizedBox(width: 4),
-              Text(
-                label,
-                style: TextStyle(
-                  fontSize: 10.5,
-                  color: theme.isDark ? Colors.white : _deepTealInk,
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-            ],
-          ),
-        ),
-      );
+        ],
+      ),
+    ),
+  );
 
   String _formatCount(int count) => count >= 1000
       ? '${(count / 1000).toStringAsFixed(count % 1000 == 0 ? 0 : 1)}K'
       : '$count';
 
   BoxDecoration _cardDecoration(NovellyThemeData theme) => BoxDecoration(
-        color: theme.isDark ? const Color(0xFF11262B) : const Color(0xFFFAFBFB),
-        border: Border.all(
-          color: theme.isDark
-              ? _boiMelaGreen.withValues(alpha: 0.5)
-              : _boiMelaGreen.withValues(alpha: 0.2),
-          width: 1.2,
-        ),
-        borderRadius: BorderRadius.circular(18),
-        boxShadow: [
-          BoxShadow(
-            color: theme.isDark
-                ? Colors.black.withValues(alpha: 0.3)
-                : _boiMelaGreen.withValues(alpha: 0.05),
-            blurRadius: 12,
-            offset: const Offset(0, 3),
-          ),
-        ],
-      );
+    color: theme.isDark ? const Color(0xFF11262B) : const Color(0xFFFAFBFB),
+    border: Border.all(
+      color: theme.isDark
+          ? _boiMelaGreen.withValues(alpha: 0.5)
+          : _boiMelaGreen.withValues(alpha: 0.2),
+      width: 1.2,
+    ),
+    borderRadius: BorderRadius.circular(18),
+    boxShadow: [
+      BoxShadow(
+        color: theme.isDark
+            ? Colors.black.withValues(alpha: 0.3)
+            : _boiMelaGreen.withValues(alpha: 0.05),
+        blurRadius: 12,
+        offset: const Offset(0, 3),
+      ),
+    ],
+  );
 }
 
 class _ProfileEditDialog extends StatefulWidget {
@@ -1032,9 +1232,7 @@ class _ProfileEditDialogState extends State<_ProfileEditDialog> {
           Container(
             padding: const EdgeInsets.fromLTRB(22, 18, 14, 16),
             decoration: const BoxDecoration(
-              gradient: LinearGradient(
-                colors: [_boiMelaGreen, _deepTealInk],
-              ),
+              gradient: LinearGradient(colors: [_boiMelaGreen, _deepTealInk]),
               borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
             ),
             child: Row(
@@ -1068,7 +1266,9 @@ class _ProfileEditDialogState extends State<_ProfileEditDialog> {
                     decoration: BoxDecoration(
                       color: const Color(0xFFE8F1F2),
                       borderRadius: BorderRadius.circular(16),
-                      border: Border.all(color: _boiMelaGreen.withValues(alpha: 0.3)),
+                      border: Border.all(
+                        color: _boiMelaGreen.withValues(alpha: 0.3),
+                      ),
                     ),
                     child: Row(
                       children: [
@@ -1077,9 +1277,13 @@ class _ProfileEditDialogState extends State<_ProfileEditDialog> {
                           backgroundColor: _boiMelaGreen,
                           backgroundImage: _avatarPath == null
                               ? null
-                              : FileImage(File(_avatarPath!)),
+                              : imageProviderForPath(_avatarPath!),
                           child: _avatarPath == null
-                              ? const Icon(Icons.person, color: Colors.white, size: 30)
+                              ? const Icon(
+                                  Icons.person,
+                                  color: Colors.white,
+                                  size: 30,
+                                )
                               : null,
                         ),
                         const SizedBox(width: 12),
@@ -1094,9 +1298,14 @@ class _ProfileEditDialogState extends State<_ProfileEditDialog> {
                         ),
                         TextButton.icon(
                           onPressed: _pickAvatar,
-                          icon: const Icon(Icons.photo_library_outlined, size: 16),
+                          icon: const Icon(
+                            Icons.photo_library_outlined,
+                            size: 16,
+                          ),
                           label: const Text('Change'),
-                          style: TextButton.styleFrom(foregroundColor: _boiMelaGreen),
+                          style: TextButton.styleFrom(
+                            foregroundColor: _boiMelaGreen,
+                          ),
                         ),
                       ],
                     ),
@@ -1182,6 +1391,7 @@ class _ProfileEditDialogState extends State<_ProfileEditDialog> {
                           isPublisher: widget.profile.isPublisher,
                           isCoverArtist: widget.profile.isCoverArtist,
                           books: widget.profile.books,
+                          publicBookCount: widget.profile.publicBookCount,
                           followerIds: widget.profile.followerIds,
                           publishers: _publishers.text
                               .split(',')
@@ -1257,7 +1467,9 @@ class _ProfileSettingsSheet extends StatelessWidget {
       valueListenable: NovellyThemeController.instance,
       builder: (context, theme, _) {
         final isDark = theme.isDark;
-        final cardBg = isDark ? const Color(0xFF15333B) : const Color(0xFFF0F5F6);
+        final cardBg = isDark
+            ? const Color(0xFF15333B)
+            : const Color(0xFFF0F5F6);
         final borderColor = isDark
             ? _boiMelaGreen.withValues(alpha: 0.5)
             : _boiMelaGreen.withValues(alpha: 0.2);
@@ -1349,7 +1561,10 @@ class _ProfileSettingsSheet extends StatelessWidget {
                   borderRadius: BorderRadius.circular(16),
                   border: Border.all(color: borderColor),
                 ),
-                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 14,
+                  vertical: 10,
+                ),
                 child: Row(
                   children: [
                     Container(
@@ -1360,7 +1575,9 @@ class _ProfileSettingsSheet extends StatelessWidget {
                         color: isDark ? const Color(0xFF1D3B42) : Colors.white,
                       ),
                       child: Icon(
-                        isDark ? Icons.dark_mode_rounded : Icons.light_mode_rounded,
+                        isDark
+                            ? Icons.dark_mode_rounded
+                            : Icons.light_mode_rounded,
                         color: isDark ? theme.accentGold : _boiMelaGreen,
                         size: 20,
                       ),
@@ -1380,7 +1597,9 @@ class _ProfileSettingsSheet extends StatelessWidget {
                           ),
                           const SizedBox(height: 1),
                           Text(
-                            isDark ? 'Boi Mela Dark theme' : 'Paper Cream Light theme',
+                            isDark
+                                ? 'Boi Mela Dark theme'
+                                : 'Paper Cream Light theme',
                             style: TextStyle(
                               color: theme.mutedColor,
                               fontSize: 12,
@@ -1397,7 +1616,9 @@ class _ProfileSettingsSheet extends StatelessWidget {
                       inactiveTrackColor: Colors.grey.shade400,
                       onChanged: (val) {
                         NovellyThemeController.instance.setTheme(
-                          val ? NovellyThemeMode.midnightInk : NovellyThemeMode.paperCream,
+                          val
+                              ? NovellyThemeMode.midnightInk
+                              : NovellyThemeMode.paperCream,
                         );
                       },
                     ),
@@ -1421,7 +1642,10 @@ class _ProfileSettingsSheet extends StatelessWidget {
                     onTap: onEditProfile,
                     borderRadius: BorderRadius.circular(16),
                     child: Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 14,
+                        vertical: 12,
+                      ),
                       child: Row(
                         children: [
                           Container(
@@ -1429,7 +1653,9 @@ class _ProfileSettingsSheet extends StatelessWidget {
                             height: 36,
                             decoration: BoxDecoration(
                               shape: BoxShape.circle,
-                              color: isDark ? const Color(0xFF1D3B42) : Colors.white,
+                              color: isDark
+                                  ? const Color(0xFF1D3B42)
+                                  : Colors.white,
                             ),
                             child: Icon(
                               Icons.edit_outlined,
@@ -1463,7 +1689,9 @@ class _ProfileSettingsSheet extends StatelessWidget {
                           ),
                           Icon(
                             Icons.chevron_right_rounded,
-                            color: isDark ? Colors.white54 : _deepTealInk.withValues(alpha: 0.5),
+                            color: isDark
+                                ? Colors.white54
+                                : _deepTealInk.withValues(alpha: 0.5),
                             size: 22,
                           ),
                         ],
@@ -1489,7 +1717,10 @@ class _ProfileSettingsSheet extends StatelessWidget {
                     onTap: onLogout,
                     borderRadius: BorderRadius.circular(16),
                     child: Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 14,
+                        vertical: 12,
+                      ),
                       child: Row(
                         children: [
                           Container(
@@ -1538,7 +1769,9 @@ class _ProfileSettingsSheet extends StatelessWidget {
                           ),
                           Icon(
                             Icons.chevron_right_rounded,
-                            color: isDark ? Colors.white54 : _deepTealInk.withValues(alpha: 0.5),
+                            color: isDark
+                                ? Colors.white54
+                                : _deepTealInk.withValues(alpha: 0.5),
                             size: 22,
                           ),
                         ],

@@ -35,14 +35,16 @@ class _CoverDesignFormState extends State<_CoverDesignForm> {
   late final _author = TextEditingController(text: widget.design?.author);
   late final _year = TextEditingController(text: widget.design?.year);
   Uint8List? _imageBytes;
-  bool _isDraft = false;
+  String _imageContentType = 'image/jpeg';
+  bool _isDraft = true;
   bool _pickingImage = false;
 
   @override
   void initState() {
     super.initState();
     _imageBytes = widget.design?.imageBytes;
-    _isDraft = widget.design?.isDraft ?? false;
+    _imageContentType = widget.design?.imageContentType ?? 'image/jpeg';
+    _isDraft = widget.design?.isDraft ?? true;
   }
 
   @override
@@ -60,7 +62,10 @@ class _CoverDesignFormState extends State<_CoverDesignForm> {
       if (image == null || !mounted) return;
       final bytes = await image.readAsBytes();
       if (!mounted) return;
-      setState(() => _imageBytes = bytes);
+      setState(() {
+        _imageBytes = bytes;
+        _imageContentType = image.mimeType ?? 'image/jpeg';
+      });
     } on PlatformException catch (error) {
       if (!mounted) return;
       ScaffoldMessenger.of(context)
@@ -96,6 +101,7 @@ class _CoverDesignFormState extends State<_CoverDesignForm> {
         creator: widget.creator,
         color: widget.design?.color ?? _gold,
         imageBytes: _imageBytes,
+        imageContentType: _imageContentType,
         isDraft: asDraft,
       ),
     );

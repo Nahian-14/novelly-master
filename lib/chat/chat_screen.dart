@@ -1,10 +1,11 @@
-import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 
 import 'chat_model.dart';
 import 'chat_service.dart';
+import '../widgets/image_provider_for_path.dart';
 
 const _ink = Color(0xFF173B43);
 const _gold = Color(0xFFC89543);
@@ -32,11 +33,20 @@ class _ChatScreenState extends State<ChatScreen> {
   @override
   void initState() {
     super.initState();
+    if (widget.service.usesMongo) _loadMessages();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) {
         widget.service.markAsRead(widget.conversation.conversationId);
       }
     });
+  }
+
+  Future<void> _loadMessages() async {
+    try {
+      await widget.service.loadMessages(widget.conversation.conversationId);
+    } catch (error) {
+      if (mounted) _showMessage('Could not load messages: $error');
+    }
   }
 
   @override
@@ -45,24 +55,43 @@ class _ChatScreenState extends State<ChatScreen> {
     super.dispose();
   }
 
-  void _sendText() {
+  Future<void> _sendText() async {
     final text = _messageController.text.trim();
     if (text.isEmpty) return;
-    widget.service.sendTextMessage(
-      conversationId: widget.conversation.conversationId,
-      text: text,
-    );
-    _messageController.clear();
+    try {
+      if (widget.service.usesMongo) {
+        await widget.service.sendTextMessageToMongo(
+          conversationId: widget.conversation.conversationId,
+          text: text,
+        );
+      } else {
+        widget.service.sendTextMessage(
+          conversationId: widget.conversation.conversationId,
+          text: text,
+        );
+      }
+      _messageController.clear();
+    } catch (error) {
+      if (mounted) _showMessage('Could not send message: $error');
+    }
   }
 
   Future<void> _pickImage() async {
     try {
       final image = await _imagePicker.pickImage(source: ImageSource.gallery);
       if (image == null || !mounted) return;
-      widget.service.sendImageMessage(
-        conversationId: widget.conversation.conversationId,
-        imagePath: image.path,
-      );
+      if (widget.service.usesMongo) {
+        await widget.service.sendImageMessageToMongo(
+          conversationId: widget.conversation.conversationId,
+          imageBytes: await image.readAsBytes(),
+          contentType: image.mimeType ?? 'image/jpeg',
+        );
+      } else {
+        widget.service.sendImageMessage(
+          conversationId: widget.conversation.conversationId,
+          imagePath: image.path,
+        );
+      }
     } catch (error) {
       if (!mounted) return;
       _showMessage('Could not select image: $error');
@@ -248,7 +277,10 @@ class _MessageBubble extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.end,
               children: [
                 if (message.type == ChatMessageType.image)
-                  _SharedImage(path: message.imagePath!)
+                  _SharedImage(
+                    path: message.imagePath,
+                    imageBytes: message.imageBytes,
+                  )
                 else
                   Align(
                     alignment: Alignment.centerLeft,
@@ -290,15 +322,18 @@ class _MessageBubble extends StatelessWidget {
 }
 
 class _SharedImage extends StatelessWidget {
-  const _SharedImage({required this.path});
+  const _SharedImage({this.path, this.imageBytes});
 
-  final String path;
+  final String? path;
+  final Uint8List? imageBytes;
 
   @override
   Widget build(BuildContext context) => ClipRRect(
     borderRadius: BorderRadius.circular(10),
-    child: Image.file(
-      File(path),
+    child: Image(
+      image: imageBytes != null
+          ? MemoryImage(imageBytes!)
+          : imageProviderForPath(path!),
       width: 220,
       height: 180,
       fit: BoxFit.cover,
@@ -447,8 +482,8 @@ class _ProfileAvatar extends StatelessWidget {
         child: imagePath == null
             ? Icon(Icons.person, color: _gold, size: radius * 1.15)
             : ClipOval(
-                child: Image.file(
-                  File(imagePath!),
+                child: Image(
+                  image: imageProviderForPath(imagePath!),
                   width: radius * 2,
                   height: radius * 2,
                   fit: BoxFit.cover,

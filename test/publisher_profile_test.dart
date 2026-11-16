@@ -75,6 +75,14 @@ void main() {
           profile: PublisherProfile(
             name: 'Sample Press',
             writersWorkedWith: ['Amina Rahman', 'David Lee'],
+            writerProfiles: [
+              WriterProfile(
+                name: 'Amina Rahman',
+                accountId: 'writer-1',
+                profileImagePath: 'assets/novelly2.png',
+              ),
+              WriterProfile(name: 'David Lee'),
+            ],
           ),
         ),
       ),
@@ -85,49 +93,50 @@ void main() {
     expect(find.text('David Lee'), findsOneWidget);
     final avatars = tester.widgetList<CircleAvatar>(find.byType(CircleAvatar));
     expect(avatars, hasLength(2));
-    expect(avatars.every((avatar) => avatar.radius == 14), isTrue);
+    expect(avatars.every((avatar) => avatar.radius == 19), isTrue);
+    expect(avatars.first.backgroundImage, isA<FileImage>());
   });
 
-  testWidgets('Edit Profile saves values shown by the Description section', (
-    tester,
-  ) async {
-    await tester.pumpWidget(
-      const MaterialApp(
-        home: PublisherProfileScreen(
-          isCurrentUser: true,
-          profile: PublisherProfile(name: 'Sample Press'),
+  testWidgets(
+    'Edit Profile reports failures when backend auth is unavailable',
+    (tester) async {
+      await tester.pumpWidget(
+        const MaterialApp(
+          home: PublisherProfileScreen(
+            isCurrentUser: true,
+            profile: PublisherProfile(name: 'Sample Press'),
+          ),
         ),
-      ),
-    );
+      );
 
-    await tester.tap(find.text('Edit Profile').first);
-    await tester.pumpAndSettle();
+      await tester.tap(find.text('Edit Profile').first);
+      await tester.pumpAndSettle();
 
-    await tester.enterText(
-      find.byWidgetPredicate(
-        (widget) =>
-            widget is TextField && widget.decoration?.hintText == 'Description',
-      ),
-      'We publish new voices in fiction.',
-    );
-    await tester.enterText(
-      find.byWidgetPredicate(
-        (widget) =>
-            widget is TextField &&
-            widget.decoration?.hintText == 'Genres Published',
-      ),
-      'Fiction, mystery',
-    );
-    await tester.tap(find.text('Save changes'));
-    await tester.pumpAndSettle();
+      await tester.enterText(
+        find.byWidgetPredicate(
+          (widget) =>
+              widget is TextField &&
+              widget.decoration?.hintText == 'Description',
+        ),
+        'We publish new voices in fiction.',
+      );
+      await tester.enterText(
+        find.byWidgetPredicate(
+          (widget) =>
+              widget is TextField &&
+              widget.decoration?.hintText == 'Genres Published',
+        ),
+        'Fiction, mystery',
+      );
+      await tester.tap(find.text('Save changes'));
+      await tester.pumpAndSettle();
 
-    expect(find.text('We publish new voices in fiction.'), findsOneWidget);
-    expect(find.text('Publishes: Fiction, mystery'), findsOneWidget);
-
-    await tester.tap(find.text('See more →'));
-    await tester.pumpAndSettle();
-    expect(find.text('Fiction, mystery'), findsOneWidget);
-  });
+      expect(
+        find.textContaining('Could not save your profile:'),
+        findsOneWidget,
+      );
+    },
+  );
 
   testWidgets('Edit Profile field prompts disappear when values are set', (
     tester,
@@ -230,6 +239,31 @@ void main() {
     expect(find.text('Book Two'), findsOneWidget);
     expect(find.text('Book Three'), findsOneWidget);
     expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('publisher book cover image is rendered when available', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      const MaterialApp(
+        home: PublisherProfileScreen(
+          profile: PublisherProfile(
+            name: 'Cover Image Press',
+            books: [
+              PublisherBook(
+                title: 'Image Test',
+                year: '2025',
+                imagePath: 'assets/novelly2.png',
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+
+    final image = tester.widget<Image>(find.byType(Image).first);
+    expect(image.fit, BoxFit.cover);
+    expect(image.image, isA<FileImage>());
   });
 
   testWidgets('publisher profile has no seeded writers or books by default', (

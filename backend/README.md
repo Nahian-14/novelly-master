@@ -50,6 +50,9 @@ account from Firebase Authentication before trying registration again.
   the UID and email from the verified Firebase token; later requests cannot
   overwrite the name or role.
 - `GET /api/profile` returns the signed-in user's profile.
+- `GET /api/profiles/:uid` returns allowlisted public profile information and
+  published book titles for a writer. Public responses omit account email and
+  private publisher royalty and contract terms.
 
 The initial supported roles match the Flutter registration screen. Treat these
 as profile data only; do not use a client-selected role as authorization for
@@ -71,3 +74,34 @@ credentials in the Flutter app.
 New signups create their profiles in MongoDB. Firebase accounts created before
 this integration need their profiles migrated or recreated before they can use
 the profile lookup endpoint.
+
+## Content storage and privacy
+
+The API stores user content in MongoDB collections for books, cover designs,
+publisher books, publisher workspaces, conversations, and messages. User profile
+documents also contain profile data and public-facing creator or publisher
+details. Passwords remain in Firebase Authentication; the backend never stores
+them.
+
+New books and cover designs are private drafts by default. Owners can list and
+edit their own drafts through the authenticated `/api/books/mine` and
+`/api/cover-designs/mine` endpoints. Publisher books are managed through
+`/api/publisher-books/mine` and are likewise private until published. The
+owner-only `PATCH /api/books/:id/publish`,
+`PATCH /api/cover-designs/:id/publish`, and
+`PATCH /api/publisher-books/:id/publish` endpoints make those items available
+through the corresponding public list endpoints. Public profiles and published
+books/designs can be searched and viewed without exposing account email
+addresses. Publisher royalty terms, royalty models, sales-report terms, and
+contract durations remain private to the account owner. Private publisher
+workspace data and chat messages are only
+available to the owning account or conversation participants.
+
+Public image URLs only serve images attached to published content or public
+profile images. Chat images require participant authorization. Image uploads
+are limited to JPEG, PNG, or WebP and 4 MB per image.
+
+The app loads public Discover data when the screen opens and refreshes it when
+the user submits a search. It does not currently use live subscriptions or
+polling, so updates made by other users appear after a refresh/search rather
+than immediately.

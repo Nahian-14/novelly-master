@@ -1,10 +1,13 @@
-import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 
 import '../reader/sample_reader.dart';
+import '../services/book_api.dart';
+import '../services/content_api.dart';
 import '../theme/theme_controller.dart';
 import 'writer_profile.dart';
+import '../widgets/image_provider_for_path.dart';
 
 const Color _boiMelaGreen = Color(0xFF1A454F);
 const Color _deepTealInk = Color(0xFF12343B);
@@ -16,12 +19,17 @@ class BookDetail {
     required this.title,
     required this.author,
     required this.rating,
+    this.id,
+    this.creatorUid,
+    this.isPublished = false,
+    this.canPublish = false,
     this.reviewCount,
     this.pageCount,
     required this.genres,
     this.description = '',
     this.externalRating,
     this.coverImagePath,
+    this.coverImageBytes,
     this.isbn,
     this.publication,
     this.goodreadsLink,
@@ -31,12 +39,17 @@ class BookDetail {
   final String title;
   final String author;
   final double rating;
+  final String? id;
+  final String? creatorUid;
+  final bool isPublished;
+  final bool canPublish;
   final int? reviewCount;
   final int? pageCount;
   final List<String> genres;
   final String description;
   final double? externalRating;
   final String? coverImagePath;
+  final Uint8List? coverImageBytes;
   final String? isbn;
   final String? publication;
   final String? goodreadsLink;
@@ -70,6 +83,89 @@ class BookDetailScreen extends StatefulWidget {
 class _BookDetailScreenState extends State<BookDetailScreen> {
   bool _descriptionExpanded = false;
   bool _sortByRating = false;
+  bool _publishing = false;
+  late bool _isPublished;
+
+  @override
+  void initState() {
+    super.initState();
+    _isPublished = widget.book.isPublished;
+  }
+
+  Future<void> _publishBook() async {
+    final id = widget.book.id;
+    if (id == null || _publishing || _isPublished) return;
+    setState(() => _publishing = true);
+    try {
+      await BookApi().publishBook(id);
+      if (!mounted) return;
+      setState(() => _isPublished = true);
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Book published and visible to everyone.'),
+        ),
+      );
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Could not publish the book: $error')),
+      );
+    } finally {
+      if (mounted) setState(() => _publishing = false);
+    }
+  }
+
+  Future<void> _openAuthorProfile() async {
+    final uid = widget.book.creatorUid;
+    late final WriterProfile profile;
+    if (uid == null || uid.isEmpty) {
+      profile = WriterProfile(
+        name: widget.book.author,
+        books: [
+          WriterBook(
+            title: widget.book.title,
+            rating: widget.book.rating,
+            reviews: widget.book.reviews
+                .map(
+                  (review) => WriterBookReview(
+                    reviewerName: review.reviewerName,
+                    rating: review.rating,
+                    body: review.body,
+                  ),
+                )
+                .toList(),
+          ),
+        ],
+        publishers: const [],
+        about: 'More information about ${widget.book.author}.',
+      );
+    } else {
+      try {
+        final result = await ContentApi().get(
+          '/api/profiles/${Uri.encodeComponent(uid)}',
+        );
+        if (result is! Map<String, dynamic>) {
+          throw const ContentApiException(
+            'The backend returned an invalid writer profile.',
+          );
+        }
+        profile = WriterProfile.fromJson(result);
+      } catch (error) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Could not load writer information: $error')),
+        );
+        return;
+      }
+    }
+
+    if (!mounted) return;
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => WriterProfileScreen(profile: profile),
+      ),
+    );
+  }
 
   List<BookReview> get _sortedReviews {
     final reviews = [...widget.book.reviews];
@@ -99,10 +195,8 @@ class _BookDetailScreenState extends State<BookDetailScreen> {
             child: SafeArea(
               child: LayoutBuilder(
                 builder: (context, constraints) {
-                  final horizontalPadding = (constraints.maxWidth * 0.045).clamp(
-                    16.0,
-                    26.0,
-                  );
+                  final horizontalPadding = (constraints.maxWidth * 0.045)
+                      .clamp(16.0, 26.0);
                   return SingleChildScrollView(
                     padding: EdgeInsets.fromLTRB(
                       horizontalPadding,
@@ -119,6 +213,8 @@ class _BookDetailScreenState extends State<BookDetailScreen> {
                             _buildBackButton(theme),
                             const SizedBox(height: 10),
                             _buildBookHeader(constraints.maxWidth, theme),
+                            if (widget.book.canPublish && !_isPublished)
+                              _buildPublishButton(),
                             const SizedBox(height: 12),
                             _buildGenreTags(theme),
                             const SizedBox(height: 12),
@@ -143,7 +239,10 @@ class _BookDetailScreenState extends State<BookDetailScreen> {
                             ..._sortedReviews.map(
                               (review) => Padding(
                                 padding: const EdgeInsets.only(bottom: 9),
-                                child: _ReviewCard(review: review, theme: theme),
+                                child: _ReviewCard(
+                                  review: review,
+                                  theme: theme,
+                                ),
                               ),
                             ),
                           ],
@@ -167,7 +266,9 @@ class _BookDetailScreenState extends State<BookDetailScreen> {
         tooltip: 'Back',
         onPressed: () => Navigator.of(context).maybePop(),
         style: IconButton.styleFrom(
-          backgroundColor: theme.isDark ? const Color(0xFF15333B) : const Color(0xFFE9E4D8),
+          backgroundColor: theme.isDark
+              ? const Color(0xFF15333B)
+              : const Color(0xFFE9E4D8),
           foregroundColor: theme.isDark ? Colors.white : _deepTealInk,
           fixedSize: const Size(38, 38),
           padding: EdgeInsets.zero,
@@ -208,14 +309,29 @@ class _BookDetailScreenState extends State<BookDetailScreen> {
         icon: const Icon(Icons.auto_stories_rounded, color: _gold, size: 18),
         label: const Text(
           'Read Sample Chapter 📖',
-          style: TextStyle(
-            fontSize: 14.5,
-            fontWeight: FontWeight.bold,
-          ),
+          style: TextStyle(fontSize: 14.5, fontWeight: FontWeight.bold),
         ),
       ),
     );
   }
+
+  Widget _buildPublishButton() => Padding(
+    padding: const EdgeInsets.only(bottom: 10),
+    child: SizedBox(
+      height: 42,
+      child: FilledButton.icon(
+        onPressed: _publishing ? null : _publishBook,
+        icon: _publishing
+            ? const SizedBox(
+                width: 16,
+                height: 16,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              )
+            : const Icon(Icons.public),
+        label: Text(_publishing ? 'Publishing...' : 'Publish this book'),
+      ),
+    ),
+  );
 
   Widget _buildBookHeader(double availableWidth, NovellyThemeData theme) {
     final compact = availableWidth <= 420;
@@ -229,6 +345,7 @@ class _BookDetailScreenState extends State<BookDetailScreen> {
           width: coverWidth,
           height: coverHeight,
           imagePath: widget.book.coverImagePath,
+          imageBytes: widget.book.coverImageBytes,
         ),
         SizedBox(width: compact ? 12 : 16),
         Expanded(
@@ -251,32 +368,7 @@ class _BookDetailScreenState extends State<BookDetailScreen> {
               ),
               const SizedBox(height: 3),
               InkWell(
-                onTap: () => Navigator.of(context).push(
-                  MaterialPageRoute<void>(
-                    builder: (_) => WriterProfileScreen(
-                      profile: WriterProfile(
-                        name: widget.book.author,
-                        books: [
-                          WriterBook(
-                            title: widget.book.title,
-                            rating: widget.book.rating,
-                            reviews: widget.book.reviews
-                                .map(
-                                  (review) => WriterBookReview(
-                                    reviewerName: review.reviewerName,
-                                    rating: review.rating,
-                                    body: review.body,
-                                  ),
-                                )
-                                .toList(),
-                          ),
-                        ],
-                        publishers: const [],
-                        about: 'More information about ${widget.book.author}.',
-                      ),
-                    ),
-                  ),
-                ),
+                onTap: _openAuthorProfile,
                 child: Text(
                   'by ${widget.book.author}',
                   maxLines: 1,
@@ -339,7 +431,10 @@ class _BookDetailScreenState extends State<BookDetailScreen> {
       children: widget.book.genres
           .map(
             (genre) => Container(
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4.5),
+              padding: const EdgeInsets.symmetric(
+                horizontal: 12,
+                vertical: 4.5,
+              ),
               decoration: BoxDecoration(
                 color: theme.isDark
                     ? _boiMelaGreen.withValues(alpha: 0.35)
@@ -424,7 +519,9 @@ class _BookDetailScreenState extends State<BookDetailScreen> {
         SizedBox(
           height: 28,
           child: IconButton(
-            tooltip: _descriptionExpanded ? 'Show less' : 'Read full description',
+            tooltip: _descriptionExpanded
+                ? 'Show less'
+                : 'Read full description',
             visualDensity: VisualDensity.compact,
             padding: EdgeInsets.zero,
             onPressed: () =>
@@ -475,7 +572,9 @@ class _BookDetailScreenState extends State<BookDetailScreen> {
                   child: Text(
                     entry.value,
                     style: TextStyle(
-                      color: theme.isDark ? Colors.white70 : const Color(0xFF55595C),
+                      color: theme.isDark
+                          ? Colors.white70
+                          : const Color(0xFF55595C),
                       fontSize: 13,
                     ),
                   ),
@@ -586,7 +685,9 @@ class _BookDetailScreenState extends State<BookDetailScreen> {
           child: Container(
             padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
             decoration: BoxDecoration(
-              color: theme.isDark ? const Color(0xFF11262B) : const Color(0xFFFAFBFB),
+              color: theme.isDark
+                  ? const Color(0xFF11262B)
+                  : const Color(0xFFFAFBFB),
               border: Border.all(
                 color: theme.isDark
                     ? _boiMelaGreen.withValues(alpha: 0.5)
@@ -622,15 +723,23 @@ class _BookDetailScreenState extends State<BookDetailScreen> {
 }
 
 class _BookCover extends StatelessWidget {
-  const _BookCover({required this.width, required this.height, this.imagePath});
+  const _BookCover({
+    required this.width,
+    required this.height,
+    this.imagePath,
+    this.imageBytes,
+  });
 
   final double width;
   final double height;
   final String? imagePath;
+  final Uint8List? imageBytes;
 
   @override
   Widget build(BuildContext context) {
-    final hasImage = imagePath != null && imagePath!.trim().isNotEmpty;
+    final hasImage =
+        imageBytes != null ||
+        (imagePath != null && imagePath!.trim().isNotEmpty);
 
     return Container(
       width: width,
@@ -652,8 +761,10 @@ class _BookCover extends StatelessWidget {
       ),
       clipBehavior: Clip.antiAlias,
       child: hasImage
-          ? Image.file(
-              File(imagePath!),
+          ? Image(
+              image: imageBytes != null
+                  ? MemoryImage(imageBytes!)
+                  : imageProviderForPath(imagePath!),
               fit: BoxFit.cover,
               width: width,
               height: height,
@@ -665,11 +776,7 @@ class _BookCover extends StatelessWidget {
 
   Widget _fallbackCover() {
     return Center(
-      child: Icon(
-        Icons.menu_book_rounded,
-        color: _gold,
-        size: width * 0.45,
-      ),
+      child: Icon(Icons.menu_book_rounded, color: _gold, size: width * 0.45),
     );
   }
 }
@@ -708,7 +815,9 @@ class _ReviewCard extends StatelessWidget {
         children: [
           CircleAvatar(
             radius: 17,
-            backgroundColor: theme.isDark ? const Color(0xFF15333B) : const Color(0xFFE8F1F2),
+            backgroundColor: theme.isDark
+                ? const Color(0xFF15333B)
+                : const Color(0xFFE8F1F2),
             child: Icon(
               Icons.person,
               color: theme.isDark ? theme.accentGold : _boiMelaGreen,
@@ -737,10 +846,7 @@ class _ReviewCard extends StatelessWidget {
                     const SizedBox(width: 6),
                     Text(
                       _relativeDate(review.createdAt),
-                      style: TextStyle(
-                        color: theme.mutedColor,
-                        fontSize: 11,
-                      ),
+                      style: TextStyle(color: theme.mutedColor, fontSize: 11),
                     ),
                   ],
                 ),
@@ -763,7 +869,9 @@ class _ReviewCard extends StatelessWidget {
                 Text(
                   review.body,
                   style: TextStyle(
-                    color: theme.isDark ? Colors.white70 : const Color(0xFF55595C),
+                    color: theme.isDark
+                        ? Colors.white70
+                        : const Color(0xFF55595C),
                     fontSize: 13,
                     height: 1.4,
                   ),

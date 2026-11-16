@@ -1,4 +1,4 @@
-import 'dart:io';
+import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
@@ -7,25 +7,23 @@ import '../logout_confirmation.dart';
 import '../Splash,login,register/login.dart';
 import '../auth/auth_service.dart';
 import '../chat/direct_chat.dart';
-import '../chat/chat_list.dart';
 import '../main_page/discover.dart';
 import '../main_page/discover_book.dart';
-import '../main_page/my_book.dart';
 import '../main_page/novelly_bottom_navigation.dart';
 import '../main_page/writer_profile.dart';
-import '../publisher/publisher_dashboard.dart';
+import '../services/content_api.dart';
 import '../publisher/publisher._directory.dart';
 import '../publisher/publisher_profile.dart';
 import '../theme/theme_controller.dart';
 import 'cover_commission_modal.dart';
 import 'cover_design.dart';
 import 'my_designs.dart';
+import '../widgets/image_provider_for_path.dart';
 
 const _ink = Color(0xFF173B43);
 const _gold = Color(0xFFC89543);
 const _muted = Color(0xFF6E787A);
 const _line = Color(0x1F173B43);
-const _paper = Color(0xFFFAF7F2);
 const _card = Color(0xFFFFFFFF);
 
 class CoverArtistProfileScreen extends StatefulWidget {
@@ -57,6 +55,8 @@ class _CoverArtistProfileScreenState extends State<CoverArtistProfileScreen> {
   String? _avatarPath;
   late final CoverArtistWorkspace _workspace;
   bool _descriptionExpanded = false;
+  List<CoverDesign> _loadedPublicCovers = const [];
+  WriterProfile? _loadedPublicProfile;
 
   bool get _isOwnProfile =>
       widget.isCurrentUser &&
@@ -69,10 +69,13 @@ class _CoverArtistProfileScreenState extends State<CoverArtistProfileScreen> {
 
   WriterProfile get _profile => _isOwnProfile
       ? WriterProfileScreen.currentUser
-      : widget.profile ?? const WriterProfile(name: 'Cover Artist');
+      : _loadedPublicProfile ??
+            widget.profile ??
+            const WriterProfile(name: 'Cover Artist');
 
-  List<CoverDesign> get _covers =>
-      _isOwnProfile ? _workspace.covers : widget.covers;
+  List<CoverDesign> get _covers => _isOwnProfile
+      ? _workspace.covers
+      : (_loadedPublicCovers.isNotEmpty ? _loadedPublicCovers : widget.covers);
 
   @override
   void initState() {
@@ -86,6 +89,141 @@ class _CoverArtistProfileScreenState extends State<CoverArtistProfileScreen> {
         ? WriterProfileScreen.currentAvatarPath ??
               WriterProfileScreen.currentUser.profileImagePath
         : widget.profile?.profileImagePath;
+    if (_isOwnProfile) {
+      _loadOwnProfile();
+      _loadOwnCovers();
+    } else if (widget.profile?.accountId.isNotEmpty ?? false) {
+      _loadPublicProfile(widget.profile!.accountId);
+      _loadPublicCovers(widget.profile!.accountId);
+    }
+  }
+
+  Future<void> _loadPublicProfile(String accountId) async {
+    try {
+      final result = await ContentApi().get(
+        '/api/profiles/${Uri.encodeComponent(accountId)}',
+      );
+      if (result is! Map<String, dynamic>) {
+        throw const ContentApiException(
+          'The backend returned an invalid artist profile.',
+        );
+      }
+      final profile = WriterProfile.fromJson(result);
+      if (!mounted) return;
+      setState(() {
+        _loadedPublicProfile = profile;
+        _avatarPath = profile.profileImagePath;
+      });
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Could not refresh this artist profile: $error'),
+        ),
+      );
+    }
+  }
+
+  Future<void> _loadOwnProfile() async {
+    final uid = WriterProfileScreen.currentUser.accountId;
+    if (uid.isEmpty) return;
+    try {
+      final result = await ContentApi().get(
+        '/api/profiles/${Uri.encodeComponent(uid)}',
+      );
+      if (result is! Map<String, dynamic>) {
+        throw const ContentApiException(
+          'The backend returned an invalid artist profile.',
+        );
+      }
+      final profile = WriterProfile.fromJson(result);
+      if (!mounted) return;
+      setState(() {
+        WriterProfileScreen.currentUser = profile;
+        WriterProfileScreen.currentAvatarPath = profile.profileImagePath;
+        _avatarPath = profile.profileImagePath;
+      });
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Could not refresh your profile: $error')),
+      );
+    }
+  }
+
+  Future<void> _loadOwnCovers() async {
+    try {
+      final result = await ContentApi().get('/api/cover-designs/mine');
+      if (result is! List) {
+        throw const ContentApiException(
+          'The backend returned an invalid design list.',
+        );
+      }
+      final designs = result
+          .whereType<Map<String, dynamic>>()
+          .map(_designFromJson)
+          .toList();
+      if (!mounted) return;
+      setState(() {
+        _workspace.covers
+          ..clear()
+          ..addAll(designs.where((design) => !design.isDraft));
+        _workspace.drafts
+          ..clear()
+          ..addAll(designs.where((design) => design.isDraft));
+      });
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Could not load your covers: $error')),
+      );
+    }
+  }
+
+  Future<void> _loadPublicCovers(String accountId) async {
+    try {
+      final result = await ContentApi().get(
+        '/api/cover-designs?ownerUid=${Uri.encodeQueryComponent(accountId)}',
+      );
+      if (result is! List) {
+        throw const ContentApiException(
+          'The backend returned an invalid design list.',
+        );
+      }
+      final api = ContentApi();
+      final covers = result
+          .whereType<Map<String, dynamic>>()
+          .map((json) => _designFromJson(json, api: api))
+          .toList();
+      if (mounted) setState(() => _loadedPublicCovers = covers);
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Could not load this artist’s covers: $error')),
+      );
+    }
+  }
+
+  CoverDesign _designFromJson(Map<String, dynamic> json, {ContentApi? api}) {
+    final image = json['imageBase64'];
+    final color = json['color'];
+    final contentApi = api ?? ContentApi();
+    return CoverDesign(
+      id: json['id'] is String ? json['id'] as String : '',
+      title: json['title'] is String ? json['title'] as String : '',
+      creator: json['creator'] is String ? json['creator'] as String : '',
+      author: json['author'] is String ? json['author'] as String : '',
+      year: json['year'] is String ? json['year'] as String : '',
+      color: Color(color is int ? color : 0xFFC89543),
+      imageBytes: image is String ? base64Decode(image) : null,
+      imageUrl: contentApi.absoluteUrl(
+        json['imageUrl'] is String ? json['imageUrl'] as String : null,
+      ),
+      isDraft: json['status'] != 'published',
+      imageContentType: json['imageContentType'] is String
+          ? json['imageContentType'] as String
+          : 'image/jpeg',
+    );
   }
 
   Future<void> _editProfile() async {
@@ -97,6 +235,36 @@ class _CoverArtistProfileScreenState extends State<CoverArtistProfileScreen> {
       ),
     );
     if (result == null || !mounted) return;
+    final api = ContentApi();
+    try {
+      final profile = result.profile;
+      await api.put('/api/profile/public', {
+        'name': profile.name,
+        'about': profile.about,
+        'goodreads': profile.goodreads,
+        'facebook': profile.facebook,
+        'instagram': profile.instagram,
+        'website': profile.website,
+        'publishers': profile.publishers,
+        'designSpecialization': profile.designSpecialization,
+        'artStyle': profile.artStyle,
+        'servicesOffered': profile.servicesOffered,
+        'yearsOfExperience': profile.yearsOfExperience,
+        'designTools': profile.designTools,
+        'workAvailability': profile.workAvailability,
+        'acceptsCustomRequests': profile.acceptsCustomRequests,
+        'pricingPackages': profile.pricingPackages,
+        'averageDeliveryTime': profile.averageDeliveryTime,
+        'revisionPolicy': profile.revisionPolicy,
+        ...await api.imagePayload('profileImageBase64', result.avatarPath),
+      });
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Could not save your profile: $error')),
+      );
+      return;
+    }
     WriterProfileScreen.currentUser = result.profile;
     WriterProfileScreen.currentAvatarPath = result.avatarPath;
     setState(() => _avatarPath = result.avatarPath);
@@ -171,7 +339,12 @@ class _CoverArtistProfileScreenState extends State<CoverArtistProfileScreen> {
                     children: [
                       Expanded(
                         child: Padding(
-                          padding: EdgeInsets.fromLTRB(horizontalPadding, 8, horizontalPadding, 0),
+                          padding: EdgeInsets.fromLTRB(
+                            horizontalPadding,
+                            8,
+                            horizontalPadding,
+                            0,
+                          ),
                           child: ListView(
                             padding: EdgeInsets.zero,
                             children: [
@@ -260,7 +433,7 @@ class _CoverArtistProfileScreenState extends State<CoverArtistProfileScreen> {
           backgroundColor: const Color(0xFFEFE6D8),
           backgroundImage: _avatarPath == null
               ? null
-              : FileImage(File(_avatarPath!)),
+              : imageProviderForPath(_avatarPath!),
           child: _avatarPath == null
               ? Icon(
                   Icons.person,
@@ -304,9 +477,9 @@ class _CoverArtistProfileScreenState extends State<CoverArtistProfileScreen> {
 
   Widget _metrics(bool compact) => Row(
     children: [
-      _metric('—', 'Covers', compact),
+      _metric('${_covers.length}', 'Covers', compact),
       _metricDivider(),
-      _metric('—', 'Publishers', compact),
+      _metric('${_profile.publishers.length}', 'Publishers', compact),
       _metricDivider(),
       _metric('—', 'Years on Novelly', compact),
     ],
@@ -514,7 +687,9 @@ class _CoverArtistProfileScreenState extends State<CoverArtistProfileScreen> {
                       style: FilledButton.styleFrom(
                         backgroundColor: _ink,
                         foregroundColor: Colors.white,
-                        padding: EdgeInsets.symmetric(vertical: compact ? 12 : 15),
+                        padding: EdgeInsets.symmetric(
+                          vertical: compact ? 12 : 15,
+                        ),
                         shape: RoundedRectangleBorder(
                           borderRadius: BorderRadius.circular(9),
                         ),
@@ -538,7 +713,9 @@ class _CoverArtistProfileScreenState extends State<CoverArtistProfileScreen> {
                       style: FilledButton.styleFrom(
                         backgroundColor: _gold,
                         foregroundColor: Colors.white,
-                        padding: EdgeInsets.symmetric(vertical: compact ? 12 : 15),
+                        padding: EdgeInsets.symmetric(
+                          vertical: compact ? 12 : 15,
+                        ),
                         shape: RoundedRectangleBorder(
                           borderRadius: BorderRadius.circular(9),
                         ),
@@ -896,7 +1073,7 @@ class _CoverArtistProfileEditDialogState
                           backgroundColor: const Color(0xFFFFF8EA),
                           backgroundImage: _avatarPath == null
                               ? null
-                              : FileImage(File(_avatarPath!)),
+                              : imageProviderForPath(_avatarPath!),
                           child: _avatarPath == null
                               ? const Icon(
                                   Icons.person_outline,

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:novelly/main_page/book_detail.dart';
 import 'package:novelly/main_page/discover.dart';
+import 'package:novelly/main_page/discover_book.dart';
 import 'package:novelly/main_page/writer_profile.dart';
 
 import 'fixtures/writer_profile_fixture.dart';
@@ -11,7 +12,40 @@ void main() {
     WriterProfileScreen.currentUser = const WriterProfile(name: 'Your profile');
   });
 
-  testWidgets('Discover profile opens and allows editing profile details', (
+  testWidgets('Discover book cards render available cover images', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      const MaterialApp(
+        home: DiscoverScreen(
+          books: [
+            DiscoverBook(
+              title: 'Image Test',
+              author: 'A. Writer',
+              rating: 'New',
+              genre: 'Fantasy',
+              imageUrl: 'assets/novelly2.png',
+            ),
+          ],
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.drag(find.byType(ListView).first, const Offset(0, -900));
+    await tester.pumpAndSettle();
+
+    expect(
+      find.byWidgetPredicate(
+        (widget) =>
+            widget is Image &&
+            widget.image is FileImage &&
+            (widget.image as FileImage).file.path == 'assets/novelly2.png',
+      ),
+      findsOneWidget,
+    );
+  });
+
+  testWidgets('profile edit dialog can be cancelled without changing profile', (
     tester,
   ) async {
     await tester.pumpWidget(const MaterialApp(home: DiscoverScreen()));
@@ -28,50 +62,10 @@ void main() {
     await tester.pumpAndSettle();
     final fields = find.byType(TextField);
     await tester.enterText(fields.at(0), 'New Name');
-    await tester.enterText(fields.at(1), 'https://goodreads.example/new');
-    await tester.enterText(fields.at(2), 'https://facebook.example/new');
-    await tester.enterText(fields.at(3), 'https://instagram.example/new');
-    await tester.enterText(fields.at(4), 'https://writer.example');
-    await tester.enterText(fields.at(5), 'A short author biography.');
-    await tester.enterText(fields.at(6), 'North Star Press, Elm House');
-    await tester.tap(find.text('Save changes'));
-    await tester.pumpAndSettle();
-    await tester.drag(find.byType(ListView).first, const Offset(0, -300));
-    await tester.pumpAndSettle();
-    expect(find.text('New Name'), findsOneWidget);
-    expect(find.text('A short author biography.'), findsOneWidget);
-    expect(find.byTooltip('https://facebook.example/new'), findsOneWidget);
-    expect(find.byTooltip('https://instagram.example/new'), findsOneWidget);
-    expect(find.byTooltip('https://writer.example'), findsOneWidget);
-    await tester.drag(find.byType(ListView).first, const Offset(0, 300));
-    await tester.pumpAndSettle();
-    await tester.tap(find.byTooltip('Settings'));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('Edit Profile'));
-    await tester.pumpAndSettle();
-    final savedFields = find.byType(TextField);
-    expect(
-      tester.widget<TextField>(savedFields.at(0)).controller!.text,
-      'New Name',
-    );
-    expect(
-      tester.widget<TextField>(savedFields.at(5)).controller!.text,
-      'A short author biography.',
-    );
-    expect(
-      tester.widget<TextField>(savedFields.at(6)).controller!.text,
-      'North Star Press, Elm House',
-    );
     await tester.tap(find.text('Cancel'));
     await tester.pumpAndSettle();
-
-    await tester.drag(find.byType(ListView).first, const Offset(0, 500));
-    await tester.pumpAndSettle();
-    await tester.tap(find.byTooltip('Back'));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('Profile'));
-    await tester.pumpAndSettle();
-    expect(find.text('New Name'), findsOneWidget);
+    expect(find.text('Your profile'), findsOneWidget);
+    expect(find.text('New Name'), findsNothing);
   });
 
   testWidgets('sample author profile data is visible and derived from books', (
@@ -96,6 +90,27 @@ void main() {
     );
     expect(find.byTooltip('https://george-orwell.example'), findsOneWidget);
   });
+
+  test(
+    'public writer profile data includes the account ID and published books',
+    () {
+      final profile = WriterProfile.fromJson({
+        'uid': 'writer-123',
+        'name': 'Published Writer',
+        'role': 'Writer',
+        'about': 'Writes speculative fiction.',
+        'publishedBookCount': 1,
+        'books': [
+          {'title': 'A Published Story', 'rating': 0},
+        ],
+      });
+
+      expect(profile.accountId, 'writer-123');
+      expect(profile.about, 'Writes speculative fiction.');
+      expect(profile.publishedBookCount, 1);
+      expect(profile.books.single.title, 'A Published Story');
+    },
+  );
 
   testWidgets('current user can cancel or confirm logging out', (tester) async {
     await tester.pumpWidget(

@@ -1,5 +1,3 @@
-import 'dart:io';
-
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 
@@ -9,7 +7,9 @@ import '../auth/auth_service.dart';
 import '../chat/direct_chat.dart';
 import '../main_page/novelly_bottom_navigation.dart';
 import '../main_page/writer_profile.dart';
+import '../services/content_api.dart';
 import '../theme/theme_controller.dart';
+import '../widgets/image_provider_for_path.dart';
 
 const Color _ink = Color(0xFF173B43);
 const Color _gold = Color(0xFFC89543);
@@ -26,6 +26,7 @@ class PublisherProfile {
     this.publishedBookCount = 0,
     this.imagePath,
     this.writersWorkedWith = const [],
+    this.writerProfiles = const [],
     this.books = const [],
     this.description = '',
     this.genresPublished = '',
@@ -44,6 +45,40 @@ class PublisherProfile {
     this.contractDuration = '',
   });
 
+  factory PublisherProfile.fromJson(Map<String, dynamic> json) {
+    final publisherData = json['publisherProfile'];
+    final data = publisherData is Map<String, dynamic>
+        ? publisherData
+        : const <String, dynamic>{};
+    String text(String key) => data[key] is String ? data[key] as String : '';
+    return PublisherProfile(
+      name: json['name'] is String ? json['name'] as String : 'Publisher',
+      accountId: json['uid'] is String ? json['uid'] as String : '',
+      publishedBookCount: json['publishedBookCount'] is int
+          ? json['publishedBookCount'] as int
+          : 0,
+      imagePath: data['imageUrl'] is String ? data['imageUrl'] as String : null,
+      writersWorkedWith: data['writersWorkedWith'] is List
+          ? (data['writersWorkedWith'] as List).whereType<String>().toList()
+          : const [],
+      description: text('description'),
+      genresPublished: text('genresPublished'),
+      bookFairParticipation: text('bookFairParticipation'),
+      publishingModel: text('publishingModel'),
+      printOnDemand: text('printOnDemand'),
+      manuscriptSubmissionGuidelines: text('manuscriptSubmissionGuidelines'),
+      manuscriptFeedbackTime: text('manuscriptFeedbackTime'),
+      averageBookPublishingTime: text('averageBookPublishingTime'),
+      inHouseEditorialTeam: text('inHouseEditorialTeam'),
+      isbnSupport: text('isbnSupport'),
+      authorRoyaltyTerms: text('authorRoyaltyTerms'),
+      royaltyModel: text('royaltyModel'),
+      salesReportsForAuthors: text('salesReportsForAuthors'),
+      complimentaryCopies: text('complimentaryCopies'),
+      contractDuration: text('contractDuration'),
+    );
+  }
+
   factory PublisherProfile.preview({
     required String name,
     required int publishedBookCount,
@@ -61,6 +96,7 @@ class PublisherProfile {
   final int publishedBookCount;
   final String? imagePath;
   final List<String> writersWorkedWith;
+  final List<WriterProfile> writerProfiles;
   final List<PublisherBook> books;
   final String description;
   final String genresPublished;
@@ -80,6 +116,7 @@ class PublisherProfile {
 
   PublisherProfile withPublicationData({
     required List<String> writersWorkedWith,
+    required List<WriterProfile> writerProfiles,
     required List<PublisherBook> books,
   }) => PublisherProfile(
     name: name,
@@ -87,6 +124,7 @@ class PublisherProfile {
     publishedBookCount: books.length,
     imagePath: imagePath,
     writersWorkedWith: List.unmodifiable(writersWorkedWith),
+    writerProfiles: List.unmodifiable(writerProfiles),
     books: List.unmodifiable(books),
     description: description,
     genresPublished: genresPublished,
@@ -112,11 +150,13 @@ class PublisherBook {
     required this.title,
     required this.year,
     this.author = '',
+    this.imagePath,
   });
 
   final String title;
   final String year;
   final String author;
+  final String? imagePath;
 }
 
 class PublisherProfileScreen extends StatefulWidget {
@@ -143,12 +183,134 @@ class _PublisherProfileScreenState extends State<PublisherProfileScreen> {
       : widget.profile ?? const PublisherProfile(name: 'Publisher');
   bool _expanded = false;
 
+  List<WriterProfile> get _displayWriters => _profile.writerProfiles.isNotEmpty
+      ? _profile.writerProfiles
+      : _profile.writersWorkedWith
+            .map((name) => WriterProfile(name: name))
+            .toList();
+
+  @override
+  void initState() {
+    super.initState();
+    if (_profile.accountId.isNotEmpty) _loadPublisherBooks();
+  }
+
+  Future<void> _loadPublisherBooks() async {
+    try {
+      final api = ContentApi();
+      final result = await api.get(
+        '/api/publisher-books?ownerUid=${Uri.encodeQueryComponent(_profile.accountId)}',
+      );
+      if (result is! List) {
+        throw const ContentApiException(
+          'The backend returned an invalid publisher book list.',
+        );
+      }
+      final books = result.whereType<Map<String, dynamic>>().map((json) {
+        return PublisherBook(
+          title: json['title'] is String ? json['title'] as String : '',
+          year: json['year'] is String ? json['year'] as String : '',
+          author: json['author'] is String ? json['author'] as String : '',
+          imagePath: json['imageUrl'] is String
+              ? api.absoluteUrl(json['imageUrl'] as String)
+              : null,
+        );
+      }).toList();
+      final writerNames = <String>[];
+      final seenNames = <String>{};
+      for (final name in [
+        ...books.map((book) => book.author),
+        ..._profile.writersWorkedWith,
+      ]) {
+        final trimmed = name.trim();
+        if (trimmed.isNotEmpty && seenNames.add(trimmed.toLowerCase())) {
+          writerNames.add(trimmed);
+        }
+      }
+
+      final writersByName = <String, WriterProfile>{};
+      try {
+        final writerResult = await api.get('/api/profiles?role=Writer');
+        if (writerResult is! List) {
+          throw const ContentApiException(
+            'The backend returned an invalid writer list.',
+          );
+        }
+        for (final json in writerResult.whereType<Map<String, dynamic>>()) {
+          final writer = WriterProfile.fromJson(json);
+          if (writer.name.trim().isNotEmpty) {
+            writersByName[writer.name.trim().toLowerCase()] = writer;
+          }
+        }
+      } catch (error) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Could not load writer profiles: $error')),
+          );
+        }
+      }
+      final writerProfiles = writerNames
+          .map(
+            (name) =>
+                writersByName[name.toLowerCase()] ?? WriterProfile(name: name),
+          )
+          .toList();
+      if (!mounted) return;
+      setState(() {
+        _profile = _profile.withPublicationData(
+          writersWorkedWith: writerNames,
+          writerProfiles: writerProfiles,
+          books: books,
+        );
+        if (widget.isCurrentUser) {
+          PublisherProfileScreen.currentUser = _profile;
+        }
+      });
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Could not load publisher books: $error')),
+      );
+    }
+  }
+
   Future<void> _editProfile() async {
     final result = await showDialog<PublisherProfile>(
       context: context,
       builder: (_) => _PublisherProfileEditDialog(profile: _profile),
     );
     if (result == null || !mounted) return;
+    if (widget.isCurrentUser) {
+      final api = ContentApi();
+      try {
+        await api.put('/api/publisher/profile', {
+          'name': result.name,
+          'description': result.description,
+          'genresPublished': result.genresPublished,
+          'bookFairParticipation': result.bookFairParticipation,
+          'publishingModel': result.publishingModel,
+          'printOnDemand': result.printOnDemand,
+          'manuscriptSubmissionGuidelines':
+              result.manuscriptSubmissionGuidelines,
+          'manuscriptFeedbackTime': result.manuscriptFeedbackTime,
+          'averageBookPublishingTime': result.averageBookPublishingTime,
+          'inHouseEditorialTeam': result.inHouseEditorialTeam,
+          'isbnSupport': result.isbnSupport,
+          'authorRoyaltyTerms': result.authorRoyaltyTerms,
+          'royaltyModel': result.royaltyModel,
+          'salesReportsForAuthors': result.salesReportsForAuthors,
+          'complimentaryCopies': result.complimentaryCopies,
+          'contractDuration': result.contractDuration,
+          ...await api.imagePayload('publisherImageBase64', result.imagePath),
+        });
+      } catch (error) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Could not save your profile: $error')),
+        );
+        return;
+      }
+    }
     setState(() => _profile = result);
     if (widget.isCurrentUser) PublisherProfileScreen.currentUser = result;
   }
@@ -192,10 +354,11 @@ class _PublisherProfileScreenState extends State<PublisherProfileScreen> {
                     20.0,
                     48.0,
                   );
-                  final bottomNavHorizontalPadding = (constraints.maxWidth * 0.05).clamp(
-                    mobile ? 16.0 : 20.0,
-                    38.0,
-                  );
+                  final bottomNavHorizontalPadding =
+                      (constraints.maxWidth * 0.05).clamp(
+                        mobile ? 16.0 : 20.0,
+                        38.0,
+                      );
                   return Column(
                     children: [
                       Expanded(
@@ -224,28 +387,36 @@ class _PublisherProfileScreenState extends State<PublisherProfileScreen> {
                             SizedBox(height: mobile ? 18 : 26),
                             Center(
                               child: ConstrainedBox(
-                                constraints: const BoxConstraints(maxWidth: 900),
+                                constraints: const BoxConstraints(
+                                  maxWidth: 900,
+                                ),
                                 child: _profileHeader(mobile, editable),
                               ),
                             ),
                             const SizedBox(height: 20),
                             Center(
                               child: ConstrainedBox(
-                                constraints: const BoxConstraints(maxWidth: 900),
+                                constraints: const BoxConstraints(
+                                  maxWidth: 900,
+                                ),
                                 child: _descriptionSection(),
                               ),
                             ),
                             const SizedBox(height: 14),
                             Center(
                               child: ConstrainedBox(
-                                constraints: const BoxConstraints(maxWidth: 900),
+                                constraints: const BoxConstraints(
+                                  maxWidth: 900,
+                                ),
                                 child: _writersSection(),
                               ),
                             ),
                             const SizedBox(height: 14),
                             Center(
                               child: ConstrainedBox(
-                                constraints: const BoxConstraints(maxWidth: 900),
+                                constraints: const BoxConstraints(
+                                  maxWidth: 900,
+                                ),
                                 child: _booksSection(),
                               ),
                             ),
@@ -515,85 +686,109 @@ class _PublisherProfileScreenState extends State<PublisherProfileScreen> {
     child: child,
   );
 
-  Widget _writersSection() => _profileSection(
-    child: Row(
-      children: [
-        Container(
-          width: 54,
-          height: 54,
-          decoration: const BoxDecoration(
-            color: Color(0xFFF7EFE3),
-            shape: BoxShape.circle,
+  Widget _writersSection() {
+    final writers = _displayWriters;
+    return _profileSection(
+      child: Row(
+        children: [
+          Container(
+            width: 54,
+            height: 54,
+            decoration: const BoxDecoration(
+              color: Color(0xFFF7EFE3),
+              shape: BoxShape.circle,
+            ),
+            child: const Icon(Icons.edit_note_rounded, color: _gold, size: 31),
           ),
-          child: const Icon(Icons.edit_note_rounded, color: _gold, size: 31),
-        ),
-        const SizedBox(width: 16),
-        Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const Text(
-                'Writer worked with',
-                style: TextStyle(
-                  color: _ink,
-                  fontFamily: 'Georgia',
-                  fontSize: 16,
-                  fontWeight: FontWeight.w600,
+          const SizedBox(width: 16),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  'Writer worked with',
+                  style: TextStyle(
+                    color: _ink,
+                    fontFamily: 'Georgia',
+                    fontSize: 16,
+                    fontWeight: FontWeight.w600,
+                  ),
                 ),
+                const SizedBox(height: 9),
+                if (writers.isEmpty)
+                  const Text(
+                    'No published author credits yet.',
+                    style: TextStyle(color: _muted, fontSize: 12),
+                  )
+                else
+                  Wrap(
+                    spacing: 7,
+                    runSpacing: 7,
+                    children: writers.take(5).map(_writerChip).toList(),
+                  ),
+              ],
+            ),
+          ),
+          if (writers.length > 5)
+            TextButton(
+              onPressed: () => _showAllWriters(context),
+              style: TextButton.styleFrom(foregroundColor: _gold),
+              child: const Text('See more  ›'),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _writerChip(WriterProfile writer) => SizedBox(
+    width: 54,
+    child: InkWell(
+      onTap: writer.accountId.isEmpty
+          ? null
+          : () => Navigator.of(context).push(
+              MaterialPageRoute<void>(
+                builder: (_) => WriterProfileScreen(profile: writer),
               ),
-              const SizedBox(height: 9),
-              Wrap(
-                spacing: 7,
-                runSpacing: 7,
-                children: _profile.writersWorkedWith.take(5).map((writer) {
-                  return SizedBox(
-                    width: 48,
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        CircleAvatar(
-                          radius: 14,
-                          backgroundColor: const Color(0xFFE8D8C1),
-                          child: Text(
-                            _initials(writer),
-                            style: const TextStyle(
-                              color: _ink,
-                              fontSize: 9,
-                              fontWeight: FontWeight.w600,
-                            ),
-                          ),
-                        ),
-                        const SizedBox(height: 3),
-                        SizedBox(
-                          height: 26,
-                          child: Text(
-                            writer,
-                            maxLines: 2,
-                            textAlign: TextAlign.center,
-                            overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(
-                              color: _ink,
-                              fontSize: 9,
-                              height: 1.1,
-                              fontWeight: FontWeight.w500,
-                            ),
-                          ),
-                        ),
-                      ],
+            ),
+      borderRadius: BorderRadius.circular(8),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          CircleAvatar(
+            radius: 19,
+            backgroundColor: const Color(0xFFE8D8C1),
+            backgroundImage: writer.profileImagePath == null
+                ? null
+                : imageProviderForPath(writer.profileImagePath!),
+            child: writer.profileImagePath == null
+                ? Text(
+                    _initials(writer.name),
+                    style: const TextStyle(
+                      color: _ink,
+                      fontSize: 10,
+                      fontWeight: FontWeight.w600,
                     ),
-                  );
-                }).toList(),
+                  )
+                : null,
+          ),
+          const SizedBox(height: 3),
+          SizedBox(
+            height: 26,
+            child: Text(
+              writer.name,
+              maxLines: 2,
+              textAlign: TextAlign.center,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(
+                color: _ink,
+                fontSize: 9,
+                height: 1.1,
+                fontWeight: FontWeight.w500,
               ),
-            ],
+            ),
           ),
-        ),
-        if (_profile.writersWorkedWith.length > 5)
-          TextButton(
-            onPressed: () => _showAllWriters(context),
-            style: TextButton.styleFrom(foregroundColor: _gold),
-            child: const Text('See more  ›'),
-          ),
-      ],
+        ],
+      ),
     ),
   );
 
@@ -664,11 +859,27 @@ class _PublisherProfileScreenState extends State<PublisherProfileScreen> {
       content: Column(
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.start,
-        children: _profile.writersWorkedWith
+        children: _displayWriters
             .map(
-              (writer) => Padding(
-                padding: const EdgeInsets.symmetric(vertical: 5),
-                child: Text(writer, style: const TextStyle(color: _ink)),
+              (writer) => ListTile(
+                contentPadding: EdgeInsets.zero,
+                leading: CircleAvatar(
+                  backgroundColor: const Color(0xFFE8D8C1),
+                  backgroundImage: writer.profileImagePath == null
+                      ? null
+                      : imageProviderForPath(writer.profileImagePath!),
+                  child: writer.profileImagePath == null
+                      ? Text(_initials(writer.name))
+                      : null,
+                ),
+                title: Text(writer.name, style: const TextStyle(color: _ink)),
+                onTap: writer.accountId.isEmpty
+                    ? null
+                    : () => Navigator.of(context).push(
+                        MaterialPageRoute<void>(
+                          builder: (_) => WriterProfileScreen(profile: writer),
+                        ),
+                      ),
               ),
             )
             .toList(),
@@ -697,49 +908,68 @@ class _PublisherBookTile extends StatelessWidget {
   ];
 
   @override
-  Widget build(BuildContext context) => Column(
-    crossAxisAlignment: CrossAxisAlignment.start,
-    children: [
-      Expanded(
-        child: Container(
-          width: double.infinity,
-          padding: const EdgeInsets.all(9),
-          decoration: BoxDecoration(
-            color: _coverColors[index % _coverColors.length],
-            borderRadius: BorderRadius.circular(10),
-          ),
-          child: Center(
-            child: Icon(
-              Icons.menu_book_rounded,
-              color: index % _coverColors.length == 2 ? _gold : _ink,
-              size: 34,
+  Widget build(BuildContext context) {
+    final imagePath = book.imagePath;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Expanded(
+          child: Container(
+            width: double.infinity,
+            decoration: BoxDecoration(
+              color: _coverColors[index % _coverColors.length],
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(10),
+              child: imagePath != null && imagePath.isNotEmpty
+                  ? Image(
+                      image: imageProviderForPath(imagePath),
+                      width: double.infinity,
+                      height: double.infinity,
+                      fit: BoxFit.cover,
+                      errorBuilder: (context, error, stackTrace) =>
+                          _placeholderCover(),
+                    )
+                  : _placeholderCover(),
             ),
           ),
         ),
-      ),
-      const SizedBox(height: 7),
-      Text(
-        book.title,
-        maxLines: 2,
-        overflow: TextOverflow.ellipsis,
-        style: const TextStyle(
-          color: _ink,
-          fontWeight: FontWeight.w600,
-          fontSize: 12,
-        ),
-      ),
-      if (book.author.trim().isNotEmpty) ...[
-        const SizedBox(height: 3),
+        const SizedBox(height: 7),
         Text(
-          book.author,
-          maxLines: 1,
+          book.title,
+          maxLines: 2,
           overflow: TextOverflow.ellipsis,
-          style: const TextStyle(color: _muted, fontSize: 11),
+          style: const TextStyle(
+            color: _ink,
+            fontWeight: FontWeight.w600,
+            fontSize: 12,
+          ),
         ),
+        if (book.author.trim().isNotEmpty) ...[
+          const SizedBox(height: 3),
+          Text(
+            book.author,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(color: _muted, fontSize: 11),
+          ),
+        ],
+        const SizedBox(height: 3),
+        Text(book.year, style: const TextStyle(color: _muted, fontSize: 12)),
       ],
-      const SizedBox(height: 3),
-      Text(book.year, style: const TextStyle(color: _muted, fontSize: 12)),
-    ],
+    );
+  }
+
+  Widget _placeholderCover() => Padding(
+    padding: const EdgeInsets.all(9),
+    child: Center(
+      child: Icon(
+        Icons.menu_book_rounded,
+        color: index % _coverColors.length == 2 ? _gold : _ink,
+        size: 34,
+      ),
+    ),
   );
 }
 
@@ -782,7 +1012,10 @@ class _PublisherImage extends StatelessWidget {
       borderRadius: BorderRadius.circular(19),
       image: path == null
           ? null
-          : DecorationImage(image: FileImage(File(path!)), fit: BoxFit.cover),
+          : DecorationImage(
+              image: imageProviderForPath(path!),
+              fit: BoxFit.cover,
+            ),
     ),
     child: path == null
         ? const Column(
@@ -922,7 +1155,7 @@ class _PublisherProfileEditDialogState
                           image: _imagePath == null
                               ? null
                               : DecorationImage(
-                                  image: FileImage(File(_imagePath!)),
+                                  image: imageProviderForPath(_imagePath!),
                                   fit: BoxFit.cover,
                                 ),
                         ),
@@ -1063,6 +1296,7 @@ class _PublisherProfileEditDialogState
                         publishedBookCount: widget.profile.publishedBookCount,
                         imagePath: _imagePath,
                         writersWorkedWith: widget.profile.writersWorkedWith,
+                        writerProfiles: widget.profile.writerProfiles,
                         books: widget.profile.books,
                         description: _description.text.trim(),
                         genresPublished: _genres.text.trim(),
