@@ -12,7 +12,12 @@
           "package_name": "com.example.novelly"
         }
       },
-      "oauth_client": [],
+      "oauth_client": [
+        {
+          "client_id": "810781939721-kg5kqejm2tf5p7q7qh8i1u865f54hi1e.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
       "api_key": [
         {
           "current_key": "AIzaSyCcyjDyZJRJLfMqxQvzYpBngNIv5Z321kQ"
@@ -20,7 +25,49 @@
       ],
       "services": {
         "appinvite_service": {
-          "other_platform_oauth_client": []
+          "other_platform_oauth_client": [
+            {
+              "client_id": "810781939721-kg5kqejm2tf5p7q7qh8i1u865f54hi1e.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
+        }
+      }
+    },
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:810781939721:android:aa9e3c67acd479d20740d8",
+        "android_client_info": {
+          "package_name": "com.nahian.novelly"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "810781939721-f2ue5b3u62qsfikqq4t94rnaon2ld178.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.nahian.novelly",
+            "certificate_hash": "e0f710db16bbc830d8beff5cd85bdd934aa06735"
+          }
+        },
+        {
+          "client_id": "810781939721-kg5kqejm2tf5p7q7qh8i1u865f54hi1e.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCcyjDyZJRJLfMqxQvzYpBngNIv5Z321kQ"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "810781939721-kg5kqejm2tf5p7q7qh8i1u865f54hi1e.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
         }
       }
     }
