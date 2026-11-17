@@ -186,6 +186,22 @@ class AuthService {
     }
   }
 
+  /// Reloads the signed-in user's database profile after the app restarts.
+  ///
+  /// Firebase keeps the login between launches, but the profile lives only in
+  /// memory, so it must be fetched again. Returns null when nobody is signed
+  /// in. Throws [ProfileApiException] (with a status code when the backend
+  /// answered) or [FirebaseAuthException] when the account cannot be restored.
+  Future<UserAuthProfile?> restoreSession() async {
+    if (Firebase.apps.isEmpty) return null;
+    final user = _auth.currentUser;
+    if (user == null) return null;
+    final profileData = await _profileApi.getProfile(
+      idToken: await _idTokenFor(user),
+    );
+    return _profileFromData(profileData, user);
+  }
+
   /// Sign out current user.
   Future<void> signOut() async {
     try {

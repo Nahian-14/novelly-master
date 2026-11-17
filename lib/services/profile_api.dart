@@ -3,9 +3,13 @@ import 'dart:convert';
 import 'package:http/http.dart' as http;
 
 class ProfileApiException implements Exception {
-  const ProfileApiException(this.message);
+  const ProfileApiException(this.message, {this.statusCode});
 
   final String message;
+
+  /// The HTTP status when the backend answered, so callers can tell
+  /// "your account was rejected" (401/403/404) from "the server is down".
+  final int? statusCode;
 
   @override
   String toString() => message;
@@ -80,6 +84,7 @@ class ProfileApi {
       final message = decodedBody['error'];
       throw ProfileApiException(
         message is String ? message : 'Database request failed.',
+        statusCode: response.statusCode,
       );
     }
     return decodedBody;

@@ -1,0 +1,403 @@
+diff --git a/lib/auth/auth_service.dart b/lib/auth/auth_service.dart
+index 64b1853..7a96c86 100644
+--- a/lib/auth/auth_service.dart
++++ b/lib/auth/auth_service.dart
+@@ -186,6 +186,22 @@ class AuthService {
+     }
+   }
+ 
++  /// Reloads the signed-in user's database profile after the app restarts.
++  ///
++  /// Firebase keeps the login between launches, but the profile lives only in
++  /// memory, so it must be fetched again. Returns null when nobody is signed
++  /// in. Throws [ProfileApiException] (with a status code when the backend
++  /// answered) or [FirebaseAuthException] when the account cannot be restored.
++  Future<UserAuthProfile?> restoreSession() async {
++    if (Firebase.apps.isEmpty) return null;
++    final user = _auth.currentUser;
++    if (user == null) return null;
++    final profileData = await _profileApi.getProfile(
++      idToken: await _idTokenFor(user),
++    );
++    return _profileFromData(profileData, user);
++  }
++
+   /// Sign out current user.
+   Future<void> signOut() async {
+     try {
+diff --git a/lib/auth/session_restore.dart b/lib/auth/session_restore.dart
+new file mode 100644
+index 0000000..7c12d5d
+--- /dev/null
++++ b/lib/auth/session_restore.dart
+@@ -0,0 +1,69 @@
++import 'package:firebase_auth/firebase_auth.dart';
++import 'package:flutter/foundation.dart';
++
++import '../main_page/writer_profile.dart';
++import '../publisher/publisher_profile.dart';
++import '../services/profile_api.dart';
++import 'auth_service.dart';
++
++enum SessionRestoreResult {
++  /// Nobody was signed in: show the login screen.
++  noSession,
++
++  /// The saved login was restored and the profile is loaded.
++  restored,
++
++  /// The saved login is no longer valid (account removed or rejected).
++  signInRequired,
++
++  /// The backend could not be reached. The login is kept so the user can retry.
++  unreachable,
++}
++
++/// Brings back the signed-in user's profile after the app is reopened.
++///
++/// Firebase remembers who is logged in, but `WriterProfileScreen.currentUser`
++/// is only memory. Without this, a restarted app shows an empty profile.
++///
++/// [restore] and [signOut] default to the real [AuthService]; tests replace them.
++Future<SessionRestoreResult> restoreSignedInUser({
++  Future<UserAuthProfile?> Function()? restore,
++  Future<void> Function()? signOut,
++}) async {
++  final restoreProfile = restore ?? AuthService().restoreSession;
++  final signOutUser = signOut ?? AuthService().signOut;
++
++  try {
++    final profile = await restoreProfile();
++    if (profile == null) return SessionRestoreResult.noSession;
++
++    final profileData = {
++      ...profile.profileData,
++      'uid': profile.uid,
++      'name': profile.name,
++      'role': profile.role,
++    };
++    WriterProfileScreen.currentUser = WriterProfile.fromJson(profileData);
++    PublisherProfileScreen.currentUser = profile.isPublisher
++        ? PublisherProfile.fromJson(profileData)
++        : null;
++    return SessionRestoreResult.restored;
++  } on ProfileApiException catch (error) {
++    final status = error.statusCode;
++    if (status == 401 || status == 403 || status == 404) {
++      await signOutUser();
++      return SessionRestoreResult.signInRequired;
++    }
++    debugPrint('Could not restore the session: $error');
++    return SessionRestoreResult.unreachable;
++  } on FirebaseAuthException catch (error) {
++    if (error.code == 'network-request-failed') {
++      return SessionRestoreResult.unreachable;
++    }
++    await signOutUser();
++    return SessionRestoreResult.signInRequired;
++  } catch (error) {
++    debugPrint('Could not restore the session: $error');
++    return SessionRestoreResult.unreachable;
++  }
++}
+diff --git a/lib/auth/splash_screen.dart b/lib/auth/splash_screen.dart
+index 6e025b0..4522aea 100644
+--- a/lib/auth/splash_screen.dart
++++ b/lib/auth/splash_screen.dart
+@@ -1,12 +1,12 @@
+ import 'dart:async';
+ import 'dart:math' as math;
+ 
+-import 'package:firebase_auth/firebase_auth.dart';
+-import 'package:firebase_core/firebase_core.dart';
+ import 'package:flutter/material.dart';
+ 
+ import '../main_page/discover.dart';
++import 'auth_service.dart';
+ import 'login_screen.dart';
++import 'session_restore.dart';
+ 
+ // Shared colors.
+ const Color _gold = Color(0xFFC8A46B);
+@@ -24,10 +24,14 @@ class _SplashScreenState extends State<SplashScreen>
+   late final AnimationController _controller;
+   Timer? _safetyTimer;
+   bool _hasNavigated = false;
++  bool _unreachable = false;
++  late Future<SessionRestoreResult> _session;
+ 
+   @override
+   void initState() {
+     super.initState();
++    // Reload the saved profile while the logo animation plays.
++    _session = _restoreSession();
+     _controller = AnimationController(
+       vsync: this,
+       duration: const Duration(milliseconds: 2200),
+@@ -45,24 +49,85 @@ class _SplashScreenState extends State<SplashScreen>
+     });
+   }
+ 
+-  void _navigateNext() {
++  Future<SessionRestoreResult> _restoreSession() => restoreSignedInUser()
++      .timeout(
++        const Duration(seconds: 20),
++        onTimeout: () => SessionRestoreResult.unreachable,
++      );
++
++  Future<void> _navigateNext() async {
+     if (_hasNavigated || !mounted) return;
+     _hasNavigated = true;
+     _safetyTimer?.cancel();
+ 
+-    Widget targetScreen = const LoginScreen();
+-    try {
+-      if (Firebase.apps.isNotEmpty && FirebaseAuth.instance.currentUser != null) {
+-        targetScreen = const DiscoverScreen();
+-      }
+-    } catch (e) {
+-      debugPrint('Splash navigation check notice: $e');
+-      targetScreen = const LoginScreen();
++    final result = await _session;
++    if (!mounted) return;
++
++    switch (result) {
++      case SessionRestoreResult.restored:
++        _open(const DiscoverScreen());
++      case SessionRestoreResult.noSession:
++      case SessionRestoreResult.signInRequired:
++        _open(const LoginScreen());
++      case SessionRestoreResult.unreachable:
++        // Keep the saved login; opening the app now would show an empty profile.
++        setState(() => _unreachable = true);
+     }
++  }
+ 
++  void _open(Widget screen) {
++    Navigator.of(
++      context,
++    ).pushReplacement(MaterialPageRoute<void>(builder: (_) => screen));
++  }
++
++  void _retry() {
++    setState(() => _unreachable = false);
++    _hasNavigated = false;
++    _session = _restoreSession();
++    _navigateNext();
++  }
++
++  Future<void> _signInAgain() async {
++    await AuthService().signOut();
+     if (!mounted) return;
+-    Navigator.of(context).pushReplacement(
+-      MaterialPageRoute<void>(builder: (_) => targetScreen),
++    _open(const LoginScreen());
++  }
++
++  Widget _buildUnreachable() {
++    return Align(
++      alignment: Alignment.bottomCenter,
++      child: SafeArea(
++        child: Padding(
++          padding: const EdgeInsets.fromLTRB(32, 0, 32, 40),
++          child: Column(
++            mainAxisSize: MainAxisSize.min,
++            children: [
++              const Text(
++                'Could not reach Novelly. Check your connection and try again.',
++                textAlign: TextAlign.center,
++                style: TextStyle(color: _trackWhite, fontSize: 15),
++              ),
++              const SizedBox(height: 16),
++              FilledButton(
++                style: FilledButton.styleFrom(
++                  backgroundColor: _gold,
++                  foregroundColor: const Color(0xFF13343C),
++                ),
++                onPressed: _retry,
++                child: const Text('Try again'),
++              ),
++              TextButton(
++                onPressed: _signInAgain,
++                child: const Text(
++                  'Sign in with a different account',
++                  style: TextStyle(color: _gold),
++                ),
++              ),
++            ],
++          ),
++        ),
++      ),
+     );
+   }
+ 
+@@ -122,18 +187,21 @@ class _SplashScreenState extends State<SplashScreen>
+               ),
+             ),
+           ),
+-          Align(
+-            alignment: Alignment.bottomCenter,
+-            child: SafeArea(
+-              child: Padding(
+-                padding: const EdgeInsets.only(bottom: 56),
+-                child: ReadingLoader(
+-                  animation: _controller,
+-                  width: loaderWidth,
++          if (_unreachable)
++            _buildUnreachable()
++          else
++            Align(
++              alignment: Alignment.bottomCenter,
++              child: SafeArea(
++                child: Padding(
++                  padding: const EdgeInsets.only(bottom: 56),
++                  child: ReadingLoader(
++                    animation: _controller,
++                    width: loaderWidth,
++                  ),
+                 ),
+               ),
+             ),
+-          ),
+         ],
+       ),
+     );
+diff --git a/lib/services/profile_api.dart b/lib/services/profile_api.dart
+index 594811b..b279f63 100644
+--- a/lib/services/profile_api.dart
++++ b/lib/services/profile_api.dart
+@@ -3,10 +3,14 @@ import 'dart:convert';
+ import 'package:http/http.dart' as http;
+ 
+ class ProfileApiException implements Exception {
+-  const ProfileApiException(this.message);
++  const ProfileApiException(this.message, {this.statusCode});
+ 
+   final String message;
+ 
++  /// The HTTP status when the backend answered, so callers can tell
++  /// "your account was rejected" (401/403/404) from "the server is down".
++  final int? statusCode;
++
+   @override
+   String toString() => message;
+ }
+@@ -80,6 +84,7 @@ class ProfileApi {
+       final message = decodedBody['error'];
+       throw ProfileApiException(
+         message is String ? message : 'Database request failed.',
++        statusCode: response.statusCode,
+       );
+     }
+     return decodedBody;
+diff --git a/test/session_restore_test.dart b/test/session_restore_test.dart
+new file mode 100644
+index 0000000..cc84bd1
+--- /dev/null
++++ b/test/session_restore_test.dart
+@@ -0,0 +1,105 @@
++import 'package:firebase_auth/firebase_auth.dart';
++import 'package:flutter_test/flutter_test.dart';
++import 'package:novelly/auth/auth_service.dart';
++import 'package:novelly/auth/session_restore.dart';
++import 'package:novelly/main_page/writer_profile.dart';
++import 'package:novelly/publisher/publisher_profile.dart';
++import 'package:novelly/services/profile_api.dart';
++
++void main() {
++  const emptyProfile = WriterProfile(name: 'Your profile');
++
++  setUp(() {
++    WriterProfileScreen.currentUser = emptyProfile;
++    PublisherProfileScreen.currentUser = null;
++  });
++
++  test('restores the saved profile into memory after a restart', () async {
++    final result = await restoreSignedInUser(
++      restore: () async => const UserAuthProfile(
++        uid: 'uid-1',
++        name: 'Nahian',
++        email: 'nahian@example.com',
++        role: 'Writer',
++        profileData: {'uid': 'uid-1', 'about': 'I write novels.'},
++      ),
++      signOut: () async => fail('A restored user must stay signed in.'),
++    );
++
++    expect(result, SessionRestoreResult.restored);
++    expect(WriterProfileScreen.currentUser.name, 'Nahian');
++    expect(WriterProfileScreen.currentUser.accountId, 'uid-1');
++    expect(PublisherProfileScreen.currentUser, isNull);
++  });
++
++  test('a publisher account also restores its publisher profile', () async {
++    final result = await restoreSignedInUser(
++      restore: () async => const UserAuthProfile(
++        uid: 'uid-2',
++        name: 'Press House',
++        email: 'press@example.com',
++        role: 'Publisher',
++        profileData: {'uid': 'uid-2'},
++      ),
++      signOut: () async {},
++    );
++
++    expect(result, SessionRestoreResult.restored);
++    expect(PublisherProfileScreen.currentUser, isNotNull);
++  });
++
++  test('nobody signed in goes to the login screen', () async {
++    final result = await restoreSignedInUser(
++      restore: () async => null,
++      signOut: () async => fail('Nothing to sign out.'),
++    );
++
++    expect(result, SessionRestoreResult.noSession);
++    expect(WriterProfileScreen.currentUser.name, 'Your profile');
++  });
++
++  for (final status in [401, 403, 404]) {
++    test('backend answer $status signs the user out', () async {
++      var signedOut = false;
++      final result = await restoreSignedInUser(
++        restore: () async =>
++            throw ProfileApiException('rejected', statusCode: status),
++        signOut: () async => signedOut = true,
++      );
++
++      expect(result, SessionRestoreResult.signInRequired);
++      expect(signedOut, isTrue);
++    });
++  }
++
++  test('a server or network failure keeps the user signed in', () async {
++    for (final failure in <Object>[
++      const ProfileApiException('down', statusCode: 503),
++      const ProfileApiException('invalid response'),
++      Exception('SocketException'),
++    ]) {
++      final result = await restoreSignedInUser(
++        restore: () async => throw failure,
++        signOut: () async => fail('A temporary failure must not sign out.'),
++      );
++      expect(result, SessionRestoreResult.unreachable);
++    }
++  });
++
++  test('Firebase offline keeps the login, other Firebase errors sign out', () async {
++    final offline = await restoreSignedInUser(
++      restore: () async =>
++          throw FirebaseAuthException(code: 'network-request-failed'),
++      signOut: () async => fail('Offline must not sign out.'),
++    );
++    expect(offline, SessionRestoreResult.unreachable);
++
++    var signedOut = false;
++    final disabled = await restoreSignedInUser(
++      restore: () async => throw FirebaseAuthException(code: 'user-disabled'),
++      signOut: () async => signedOut = true,
++    );
++    expect(disabled, SessionRestoreResult.signInRequired);
++    expect(signedOut, isTrue);
++  });
++}

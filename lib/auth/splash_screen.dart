@@ -1,12 +1,12 @@
 import 'dart:async';
 import 'dart:math' as math;
 
-import 'package:firebase_auth/firebase_auth.dart';
-import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/material.dart';
 
 import '../main_page/discover.dart';
+import 'auth_service.dart';
 import 'login_screen.dart';
+import 'session_restore.dart';
 
 // Shared colors.
 const Color _gold = Color(0xFFC8A46B);
@@ -24,10 +24,14 @@ class _SplashScreenState extends State<SplashScreen>
   late final AnimationController _controller;
   Timer? _safetyTimer;
   bool _hasNavigated = false;
+  bool _unreachable = false;
+  late Future<SessionRestoreResult> _session;
 
   @override
   void initState() {
     super.initState();
+    // Reload the saved profile while the logo animation plays.
+    _session = _restoreSession();
     _controller = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 2200),
@@ -45,24 +49,85 @@ class _SplashScreenState extends State<SplashScreen>
     });
   }
 
-  void _navigateNext() {
+  Future<SessionRestoreResult> _restoreSession() => restoreSignedInUser()
+      .timeout(
+        const Duration(seconds: 20),
+        onTimeout: () => SessionRestoreResult.unreachable,
+      );
+
+  Future<void> _navigateNext() async {
     if (_hasNavigated || !mounted) return;
     _hasNavigated = true;
     _safetyTimer?.cancel();
 
-    Widget targetScreen = const LoginScreen();
-    try {
-      if (Firebase.apps.isNotEmpty && FirebaseAuth.instance.currentUser != null) {
-        targetScreen = const DiscoverScreen();
-      }
-    } catch (e) {
-      debugPrint('Splash navigation check notice: $e');
-      targetScreen = const LoginScreen();
-    }
-
+    final result = await _session;
     if (!mounted) return;
-    Navigator.of(context).pushReplacement(
-      MaterialPageRoute<void>(builder: (_) => targetScreen),
+
+    switch (result) {
+      case SessionRestoreResult.restored:
+        _open(const DiscoverScreen());
+      case SessionRestoreResult.noSession:
+      case SessionRestoreResult.signInRequired:
+        _open(const LoginScreen());
+      case SessionRestoreResult.unreachable:
+        // Keep the saved login; opening the app now would show an empty profile.
+        setState(() => _unreachable = true);
+    }
+  }
+
+  void _open(Widget screen) {
+    Navigator.of(
+      context,
+    ).pushReplacement(MaterialPageRoute<void>(builder: (_) => screen));
+  }
+
+  void _retry() {
+    setState(() => _unreachable = false);
+    _hasNavigated = false;
+    _session = _restoreSession();
+    _navigateNext();
+  }
+
+  Future<void> _signInAgain() async {
+    await AuthService().signOut();
+    if (!mounted) return;
+    _open(const LoginScreen());
+  }
+
+  Widget _buildUnreachable() {
+    return Align(
+      alignment: Alignment.bottomCenter,
+      child: SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(32, 0, 32, 40),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Text(
+                'Could not reach Novelly. Check your connection and try again.',
+                textAlign: TextAlign.center,
+                style: TextStyle(color: _trackWhite, fontSize: 15),
+              ),
+              const SizedBox(height: 16),
+              FilledButton(
+                style: FilledButton.styleFrom(
+                  backgroundColor: _gold,
+                  foregroundColor: const Color(0xFF13343C),
+                ),
+                onPressed: _retry,
+                child: const Text('Try again'),
+              ),
+              TextButton(
+                onPressed: _signInAgain,
+                child: const Text(
+                  'Sign in with a different account',
+                  style: TextStyle(color: _gold),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
     );
   }
 
@@ -122,18 +187,21 @@ class _SplashScreenState extends State<SplashScreen>
               ),
             ),
           ),
-          Align(
-            alignment: Alignment.bottomCenter,
-            child: SafeArea(
-              child: Padding(
-                padding: const EdgeInsets.only(bottom: 56),
-                child: ReadingLoader(
-                  animation: _controller,
-                  width: loaderWidth,
+          if (_unreachable)
+            _buildUnreachable()
+          else
+            Align(
+              alignment: Alignment.bottomCenter,
+              child: SafeArea(
+                child: Padding(
+                  padding: const EdgeInsets.only(bottom: 56),
+                  child: ReadingLoader(
+                    animation: _controller,
+                    width: loaderWidth,
+                  ),
                 ),
               ),
             ),
-          ),
         ],
       ),
     );
