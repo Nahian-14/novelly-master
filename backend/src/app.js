@@ -1,6 +1,33 @@
 import { randomUUID } from 'node:crypto';
 
+import cors from 'cors';
 import express from 'express';
+
+const localhostOrigin = /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/;
+
+/**
+ * Browsers (Flutter web) block calls to this API unless it sends CORS headers.
+ * `flutter run -d chrome` picks a random localhost port, so any localhost
+ * origin is allowed unless `allowLocalhostOrigins` is false. Add your deployed
+ * site(s) through `corsOrigins` (the CORS_ORIGINS environment variable).
+ * The Android app is not a browser and is not affected by CORS.
+ */
+function buildCors({ corsOrigins, allowLocalhostOrigins }) {
+  const allowed = new Set(corsOrigins);
+  return cors({
+    origin(origin, callback) {
+      if (!origin) return callback(null, true);
+      return callback(
+        null,
+        allowed.has(origin) ||
+          (allowLocalhostOrigins && localhostOrigin.test(origin)),
+      );
+    },
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Authorization', 'Content-Type'],
+    maxAge: 600,
+  });
+}
 
 const allowedRoles = new Set([
   'Writer',
@@ -164,9 +191,13 @@ export function createApp({
   conversations,
   messages,
   verifyIdToken,
+  corsOrigins = [],
+  allowLocalhostOrigins = true,
 }) {
   const app = express();
 
+  app.disable('x-powered-by');
+  app.use(buildCors({ corsOrigins, allowLocalhostOrigins }));
   app.use(express.json({ limit: '8mb' }));
 
   app.get('/health', (_request, response) => {

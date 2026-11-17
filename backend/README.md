@@ -105,3 +105,42 @@ The app loads public Discover data when the screen opens and refreshes it when
 the user submits a search. It does not currently use live subscriptions or
 polling, so updates made by other users appear after a refresh/search rather
 than immediately.
+
+## Using the app with the phone unplugged
+
+`http://10.0.2.2:3000` and `localhost` only work while the phone is attached to
+your computer. To use the app away from the cable the API must be reachable on
+the internet over HTTPS, because Android release builds refuse plain `http://`.
+
+1. Host the `backend` folder on any Node host (Render, Railway, Fly.io, ...).
+   Build command `npm install`, start command `npm start`. Add these as
+   environment variables on the host instead of `.env.local`:
+   `MONGODB_URI`, `MONGODB_DB`, `FIREBASE_PROJECT_ID`, `FIREBASE_CLIENT_EMAIL`,
+   `FIREBASE_PRIVATE_KEY`, and `ALLOW_LOCALHOST_ORIGINS=false`.
+2. In MongoDB Atlas > Network Access, a host with changing IP addresses needs
+   `0.0.0.0/0`. That is acceptable only because the database user has a strong
+   password and `readWrite` on the `novelly` database only.
+3. Check `https://<your-host>/health` shows `{"status":"ok"}` in a browser.
+4. Register the SHA-1 and SHA-256 of the key that signs your app (step 4 of
+   Local setup), download the new `google-services.json`, and replace
+   `android/app/google-services.json`. Without this, Google sign-in fails.
+5. Build an installable app and put it on the phone:
+
+```powershell
+flutter build apk --release --dart-define=API_BASE_URL=https://<your-host>
+```
+
+   Install `build/app/outputs/flutter-apk/app-release.apk` (copy it to the phone,
+   or run `flutter install`). The URL is baked into the app at build time, so
+   rebuild if the URL changes.
+
+Free hosts put idle servers to sleep, so the first request after a pause can
+take up to a minute. The app waits up to 45 seconds for it.
+
+## Flutter web (Chrome)
+
+Web has no `google-services.json`, so give Flutter the web app's config. It is
+in Firebase Console > Project settings > Your apps > Web app, and these values
+are public identifiers, not secrets. See `lib/firebase_options.dart` for the
+exact `--dart-define` names. Browser calls to the API are allowed from any
+`localhost` port by default; add your deployed site to `CORS_ORIGINS`.

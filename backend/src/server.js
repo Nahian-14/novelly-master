@@ -64,6 +64,12 @@ async function start() {
       conversations,
       messages,
       verifyIdToken: (token) => getAuth().verifyIdToken(token),
+      corsOrigins: (process.env.CORS_ORIGINS ?? '')
+        .split(',')
+        .map((origin) => origin.trim())
+        .filter(Boolean),
+      // Set ALLOW_LOCALHOST_ORIGINS=false in production.
+      allowLocalhostOrigins: process.env.ALLOW_LOCALHOST_ORIGINS !== 'false',
     });
     const server = app.listen(port, '0.0.0.0', () => {
       console.log(`Novelly API listening on port ${port}`);

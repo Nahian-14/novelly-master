@@ -116,7 +116,7 @@ class BookApi {
           _uri('/api/books/${Uri.encodeComponent(id)}'),
           headers: await _headers(),
         )
-        .timeout(const Duration(seconds: 10));
+        .timeout(const Duration(seconds: 45));
     final body = _decode(response);
     if (body is! Map<String, dynamic>) {
       throw const BookApiException('The backend returned an invalid response.');
@@ -153,7 +153,7 @@ class BookApi {
             'imageBase64ContentType': ?imageContentType,
           }),
         )
-        .timeout(const Duration(seconds: 10));
+        .timeout(const Duration(seconds: 45));
     final body = _decode(response);
     if (body is! Map<String, dynamic>) {
       throw const BookApiException('The backend returned an invalid response.');
@@ -167,7 +167,7 @@ class BookApi {
           _uri('/api/books/${Uri.encodeComponent(id)}/publish'),
           headers: await _headers(),
         )
-        .timeout(const Duration(seconds: 10));
+        .timeout(const Duration(seconds: 45));
     final body = _decode(response);
     if (body is! Map<String, dynamic>) {
       throw const BookApiException('The backend returned an invalid response.');
@@ -178,7 +178,7 @@ class BookApi {
   Future<List<RemoteBook>> _fetchList(String path) async {
     final response = await _client
         .get(_uri(path), headers: await _headers())
-        .timeout(const Duration(seconds: 10));
+        .timeout(const Duration(seconds: 45));
     final body = _decode(response);
     if (body is! List) {
       throw const BookApiException('The backend returned an invalid response.');

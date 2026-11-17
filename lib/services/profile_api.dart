@@ -26,6 +26,9 @@ class ProfileApi {
     }
   }
 
+  // Free hosting tiers can take ~30-60s to wake an idle backend.
+  static const _requestTimeout = Duration(seconds: 45);
+
   final http.Client _client;
   final String _baseUrl;
 
@@ -42,14 +45,14 @@ class ProfileApi {
           headers: _headers(idToken),
           body: jsonEncode({'name': name, 'role': role}),
         )
-        .timeout(const Duration(seconds: 10));
+        .timeout(_requestTimeout);
     return _decodeResponse(response);
   }
 
   Future<Map<String, dynamic>> getProfile({required String idToken}) async {
     final response = await _client
         .get(_profileUri, headers: _headers(idToken))
-        .timeout(const Duration(seconds: 10));
+        .timeout(_requestTimeout);
     return _decodeResponse(response);
   }
 

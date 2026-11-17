@@ -44,6 +44,9 @@ class AuthService {
     required String role,
   }) async {
     if (Firebase.apps.isEmpty) {
+      // Offline stand-in used only by widget tests. A release build must never
+      // pretend an account was created, so it fails loudly instead.
+      if (kReleaseMode) _ensureFirebaseInitialized();
       return UserAuthProfile(
         uid: 'test-uid',
         name: name.trim(),
@@ -73,12 +76,24 @@ class AuthService {
         debugPrint('Update display name warning: $e');
       }
 
-      final profileData = await _profileApi.createProfile(
-        idToken: await _idTokenFor(user),
-        name: name.trim(),
-        role: role,
-      );
-      return _profileFromData(profileData, user);
+      try {
+        final profileData = await _profileApi.createProfile(
+          idToken: await _idTokenFor(user),
+          name: name.trim(),
+          role: role,
+        );
+        return _profileFromData(profileData, user);
+      } catch (_) {
+        // Do not leave a Firebase account without a database profile: the user
+        // could never log in or register again with this email. Undo it so
+        // they can simply retry.
+        try {
+          await user.delete();
+        } catch (deleteError) {
+          debugPrint('Could not roll back the new account: $deleteError');
+        }
+        rethrow;
+      }
     } on FirebaseAuthException catch (e) {
       throw _handleAuthException(e);
     } catch (e) {
@@ -93,6 +108,7 @@ class AuthService {
     required String password,
   }) async {
     if (Firebase.apps.isEmpty) {
+      if (kReleaseMode) _ensureFirebaseInitialized();
       return UserAuthProfile(
         uid: 'test-uid',
         name: 'Test User',

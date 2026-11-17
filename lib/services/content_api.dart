@@ -66,7 +66,7 @@ class ContentApi {
   Future<void> delete(String path) async {
     final response = await _client
         .delete(uri(path), headers: await _headers())
-        .timeout(const Duration(seconds: 15));
+        .timeout(const Duration(seconds: 45));
     if (response.statusCode < 200 || response.statusCode >= 300) {
       _throwResponse(response);
     }
